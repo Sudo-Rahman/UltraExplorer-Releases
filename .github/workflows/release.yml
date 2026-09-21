@@ -1,0 +1,307 @@
+name: Publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full 40-character commit SHA from Sudo-Rahman/UltraExplorer
+        required: true
+        type: string
+      version:
+        description: Release version without the leading v, matching the private source
+        required: true
+        type: string
+      prerelease:
+        description: Publish as a prerelease and do not update the latest container tag
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Run the complete quality gate
+    uses: ./.github/workflows/ci.yml
+    with:
+      source_sha: ${{ inputs.source_sha }}
+    secrets: inherit
+
+  validate-release:
+    name: Validate release inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Validate the source SHA and semantic version
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_sha must be a lowercase 40-character commit SHA" >&2
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must be a semantic version without a leading v" >&2
+            exit 1
+          fi
+      - name: Check out the private source revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Sudo-Rahman/UltraExplorer
+          ref: ${{ inputs.source_sha }}
+          ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: source
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Require every canonical package version to match the release
+        working-directory: source
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          node <<'NODE'
+          const { readFileSync } = require('node:fs');
+
+          const expected = process.env.VERSION;
+          const packageVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
+          const tauriVersion = JSON.parse(
+            readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8')
+          ).version;
+          const cargo = readFileSync('Cargo.toml', 'utf8');
+          const cargoVersion = cargo.match(/\[workspace\.package\][\s\S]*?version\s*=\s*"([^"]+)"/)?.[1];
+
+          for (const [name, actual] of [
+            ['package.json', packageVersion],
+            ['tauri.conf.json', tauriVersion],
+            ['Cargo.toml', cargoVersion]
+          ]) {
+            if (actual !== expected) {
+              throw new Error(`${name} version ${actual ?? '<missing>'} does not match ${expected}`);
+            }
+          }
+          NODE
+      - name: Reject an existing public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists" >&2
+            exit 1
+          fi
+      - name: Export normalized release metadata
+        id: release
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+  build-desktop:
+    name: Build ${{ matrix.artifact }}
+    needs: [quality, validate-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            artifact: linux-x64
+          - runner: windows-latest
+            artifact: windows-x64
+          - runner: macos-latest
+            artifact: macos-arm64
+          - runner: macos-15-intel
+            artifact: macos-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - name: Check out the private source revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Sudo-Rahman/UltraExplorer
+          ref: ${{ inputs.source_sha }}
+          ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: source
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.90.0
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        with:
+          version: 11.15.1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare Unix rclone sidecar
+        if: runner.os != 'Windows'
+        run: bash ./scripts/prepare-rclone-sidecar.sh
+      - name: Prepare Windows rclone sidecar
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/prepare-rclone-sidecar.ps1
+      - name: Build installable Tauri bundles
+        run: pnpm desktop:build --ci
+      - name: Collect Unix release files
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p release-files
+          find target/release/bundle -type f \( \
+            -name '*.AppImage' -o \
+            -name '*.deb' -o \
+            -name '*.rpm' -o \
+            -name '*.dmg' -o \
+            -name '*.tar.gz' \
+          \) -exec cp {} release-files/ \;
+          test -n "$(find release-files -type f -print -quit)"
+      - name: Collect Windows release files
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-files | Out-Null
+          $files = Get-ChildItem target/release/bundle -Recurse -File |
+            Where-Object { $_.Extension -in '.msi', '.exe', '.zip' }
+          if (-not $files) { throw 'No Windows release files were produced' }
+          $files | Copy-Item -Destination release-files
+      - name: Upload installable bundles only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-${{ matrix.artifact }}
+          path: source/release-files/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build-docker:
+    name: Publish multi-architecture container
+    needs: [quality, validate-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Check out the private source revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Sudo-Rahman/UltraExplorer
+          ref: ${{ inputs.source_sha }}
+          ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: source
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate container metadata
+        id: metadata
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/sudo-rahman/ultra-explorer
+          tags: |
+            type=raw,value=${{ inputs.version }}
+            type=raw,value=latest,enable=${{ !inputs.prerelease }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ inputs.source_sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+      - name: Build and publish the final runtime image
+        id: container
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: source
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+      - name: Attest the container provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ghcr.io/sudo-rahman/ultra-explorer
+          subject-digest: ${{ steps.container.outputs.digest }}
+          push-to-registry: true
+
+  publish-release:
+    name: Create the public GitHub Release
+    needs: [validate-release, build-desktop, build-docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Download all desktop bundles
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: desktop-*
+          path: release-assets
+          merge-multiple: true
+      - name: Generate SHA-256 checksums and release notes
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          cd release-assets
+          find . -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          cd ..
+          cat > release-notes.md <<EOF
+          Ultra Explorer $VERSION
+
+          Built and tested from private source revision \`$SOURCE_SHA\`.
+
+          Container image:
+
+          \`docker pull ghcr.io/sudo-rahman/ultra-explorer:$VERSION\`
+          EOF
+      - name: Attest desktop release artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release-assets/*
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          TAG: ${{ needs.validate-release.outputs.tag }}
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          args=(
+            "$TAG"
+            release-assets/*
+            --repo "$GITHUB_REPOSITORY"
+            --target "$GITHUB_SHA"
+            --title "Ultra Explorer $VERSION"
+            --notes-file release-notes.md
+          )
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          else
+            args+=(--latest)
+          fi
+          gh release create "${args[@]}"
