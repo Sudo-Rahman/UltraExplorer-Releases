@@ -215,8 +215,11 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: pnpm desktop:build --ci
-      - name: Build installable Tauri bundles
-        if: runner.os != 'macOS'
+      - name: Build the Linux AppImage
+        if: runner.os == 'Linux'
+        run: pnpm desktop:build --ci --bundles appimage
+      - name: Build Windows installers
+        if: runner.os == 'Windows'
         run: pnpm desktop:build --ci
       - name: Notarize and staple the macOS DMG
         if: runner.os == 'macOS'
@@ -256,11 +259,7 @@ jobs:
               -name '*.tar.gz' \
             \) -exec cp {} release-files/ \;
           else
-            find target/release/bundle -type f \( \
-              -name '*.AppImage' -o \
-              -name '*.deb' -o \
-              -name '*.rpm' \
-            \) -exec cp {} release-files/ \;
+            find target/release/bundle -type f -name '*.AppImage' -exec cp {} release-files/ \;
           fi
           test -n "$(find release-files -type f -print -quit)"
       - name: Collect Windows release files

@@ -134,13 +134,16 @@ test('snapshot builds upload installers directly to the private builds repositor
 	assert.doesNotMatch(contents, /cache-to:\s*type=gha/);
 });
 
-test('Unix bundle collection excludes Debian internals from Linux snapshots and releases', async () => {
+test('Linux snapshot and release builds produce only AppImage bundles', async () => {
 	for (const path of [SNAPSHOT_PATH, RELEASE_PATH]) {
 		const contents = await workflow(path);
 
+		assert.match(contents, /if:\s+runner\.os == 'Linux'/);
+		assert.match(contents, /pnpm desktop:build --ci --bundles appimage/);
 		assert.match(contents, /if \[\[ "\$RUNNER_OS" == "macOS" \]\]/);
-		assert.match(contents, /-name '\*\.AppImage' -o\s+\\?\n?\s*-name '\*\.deb' -o/);
+		assert.match(contents, /-name '\*\.AppImage'/);
 		assert.match(contents, /-name '\*\.dmg' -o\s+\\?\n?\s*-name '\*\.tar\.gz'/);
+		assert.doesNotMatch(contents, /-name '\*\.(?:deb|rpm)'/);
 	}
 });
 
@@ -150,7 +153,7 @@ test('snapshot and release workflows target macOS Apple Silicon only', async () 
 
 		assert.match(contents, /macos-latest/);
 		assert.match(contents, /macos-arm64/);
-		assert.doesNotMatch(contents, /macos-15-intel|macos-x64|--bundles app/);
+		assert.doesNotMatch(contents, /macos-15-intel|macos-x64|--bundles app(?:\s|$)/m);
 	}
 });
 
