@@ -161,3 +161,31 @@ test('snapshot cleanup tolerates a draft release without a materialized Git tag'
 	assert.match(contents, /gh release delete[\s\S]*--yes/);
 	assert.match(contents, /git\/refs\/tags\/\$\{SNAPSHOT_TAG\}[\s\S]*\|\| true/);
 });
+
+test('macOS snapshot and release builds sign, notarize once, verify, and clean up', async () => {
+	for (const path of [SNAPSHOT_PATH, RELEASE_PATH]) {
+		const contents = await workflow(path);
+
+		for (const secret of [
+			'APPLE_CERTIFICATE',
+			'APPLE_CERTIFICATE_PASSWORD',
+			'APPLE_API_PRIVATE_KEY',
+			'APPLE_API_KEY',
+			'APPLE_API_ISSUER',
+			'APPLE_SIGNING_IDENTITY'
+		]) {
+			assert.ok(contents.includes(`secrets.${secret}`), `missing Apple secret: ${secret}`);
+		}
+
+		assert.match(contents, /if:\s+runner\.os == 'macOS'/);
+		assert.match(contents, /openssl rand -hex 32/);
+		assert.match(contents, /security import[\s\S]*-T \/usr\/bin\/codesign/);
+		assert.match(contents, /echo "APPLE_API_KEY_PATH=\$API_KEY_PATH"/);
+		assert.match(contents, /\}\s*>> "\$GITHUB_ENV"/);
+		assert.match(contents, /codesign --verify --deep --strict/);
+		assert.match(contents, /xcrun stapler validate/);
+		assert.match(contents, /spctl -a -vv --type exec/);
+		assert.match(contents, /security delete-keychain/);
+		assert.doesNotMatch(contents, /xcrun notarytool submit/);
+	}
+});
