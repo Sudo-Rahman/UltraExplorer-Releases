@@ -3,30 +3,16 @@ name: Publish release
 on:
   workflow_dispatch:
     inputs:
-      channel:
-        description: Stable full release or isolated public macOS updater test
-        required: true
-        default: stable
-        type: choice
-        options: [stable, updater-test]
       source_tag:
-        description: Stable only - existing private main version tag
-        required: false
-        type: string
-      source_sha:
-        description: Test only - exact private source commit (need not be on main)
-        required: false
-        type: string
-      test_version:
-        description: Test only - e.g. 0.1.1-updater.1 then 0.1.1-updater.2
-        required: false
+        description: Existing private main tag matching the Cargo version (vX.Y.Z)
+        required: true
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-release-${{ inputs.channel }}
+  group: publish-release
   cancel-in-progress: false
 
 jobs:
@@ -36,8 +22,6 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       source_sha: ${{ needs.validate-release.outputs.source_sha }}
-      desktop_platform: ${{ inputs.channel == 'updater-test' && 'macos' || 'all' }}
-      skip_docker: ${{ inputs.channel == 'updater-test' }}
     secrets: inherit
 
   validate-release:
@@ -50,6 +34,8 @@ jobs:
       version: ${{ steps.request.outputs.version }}
       matrix: ${{ steps.request.outputs.matrix }}
     steps:
+      - name: Require release tooling from main
+        run: test "$GITHUB_REF" = refs/heads/main
       - name: Check out public release tooling
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -61,10 +47,7 @@ jobs:
       - name: Validate release request
         id: request
         env:
-          CHANNEL: ${{ inputs.channel }}
           SOURCE_TAG: ${{ inputs.source_tag }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          TEST_VERSION: ${{ inputs.test_version }}
         run: node release-tools/scripts/release-inputs.mjs
       - name: Test public release tooling
         run: node --test release-tools/tests/*.test.mjs
@@ -78,43 +61,20 @@ jobs:
           fetch-depth: 0
           path: source
       - name: Require the private tag to belong to main
-        if: inputs.channel == 'stable'
         working-directory: source
         run: |
           if ! git merge-base --is-ancestor HEAD origin/main; then
             echo "The selected private tag is not part of main" >&2
             exit 1
           fi
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          node-version: 24
-      - name: Require every canonical package version to match the release
-        if: inputs.channel == 'stable'
+          toolchain: 1.90.0
+      - name: Require the Cargo application version to match the release
         working-directory: source
         env:
           VERSION: ${{ steps.request.outputs.version }}
-        run: |
-          node <<'NODE'
-          const { readFileSync } = require('node:fs');
-
-          const expected = process.env.VERSION;
-          const packageVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
-          const tauriVersion = JSON.parse(
-            readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8')
-          ).version;
-          const cargo = readFileSync('Cargo.toml', 'utf8');
-          const cargoVersion = cargo.match(/\[workspace\.package\][\s\S]*?version\s*=\s*"([^"]+)"/)?.[1];
-
-          for (const [name, actual] of [
-            ['package.json', packageVersion],
-            ['tauri.conf.json', tauriVersion],
-            ['Cargo.toml', cargoVersion]
-          ]) {
-            if (actual !== expected) {
-              throw new Error(`${name} version ${actual ?? '<missing>'} does not match ${expected}`);
-            }
-          }
-          NODE
+        run: node scripts/application-version.mjs "$VERSION"
       - name: Reject an existing public release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -127,14 +87,7 @@ jobs:
       - name: Export the immutable private source revision
         id: release
         working-directory: source
-        env:
-          CHANNEL: ${{ inputs.channel }}
-          REQUESTED_SHA: ${{ inputs.source_sha }}
         run: |
-          if [[ "$CHANNEL" == "updater-test" && "$(git rev-parse HEAD)" != "$REQUESTED_SHA" ]]; then
-            echo "Checkout does not match requested immutable source" >&2
-            exit 1
-          fi
           echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build-desktop:
@@ -240,19 +193,13 @@ jobs:
         shell: bash
         env:
           DISTRIBUTION: ${{ matrix.distribution }}
-          CHANNEL: ${{ inputs.channel }}
-          VERSION: ${{ needs.validate-release.outputs.version }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          args=(--ci --distribution "$DISTRIBUTION")
-          if [[ "$CHANNEL" == "updater-test" ]]; then
-            args+=(--update-channel updater-test --test-version "$VERSION")
-          fi
-          pnpm desktop:build "${args[@]}"
+          pnpm desktop:build --ci --distribution "$DISTRIBUTION"
       - name: Notarize and staple the macOS DMG
         if: runner.os == 'macOS'
         shell: bash
@@ -285,8 +232,7 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
           VERSION: ${{ needs.validate-release.outputs.version }}
-          CHANNEL: ${{ inputs.channel }}
-        run: node ../release-tools/scripts/updater-manifest.mjs collect target/release/bundle release-files "$PLATFORM" "$VERSION" "$CHANNEL"
+        run: node ../release-tools/scripts/updater-manifest.mjs collect target/release/bundle release-files "$PLATFORM" "$VERSION"
       - name: Upload installable bundles only
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -304,7 +250,6 @@ jobs:
           rm -f "${APPLE_API_KEY_PATH:-}" "${APPLE_CERTIFICATE_PATH:-}"
 
   build-docker:
-    if: inputs.channel == 'stable'
     name: Publish multi-architecture container
     needs: [quality, validate-release, build-desktop]
     runs-on: ubuntu-latest
@@ -339,7 +284,7 @@ jobs:
           images: ghcr.io/sudo-rahman/ultra-explorer
           tags: |
             type=raw,value=${{ needs.validate-release.outputs.version }}
-            type=raw,value=latest,enable=${{ inputs.channel == 'stable' }}
+            type=raw,value=latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ needs.validate-release.outputs.source_sha }}
@@ -361,7 +306,6 @@ jobs:
           push-to-registry: true
 
   publish-release:
-    if: ${{ always() && needs.validate-release.result == 'success' && needs.build-desktop.result == 'success' && (needs.build-docker.result == 'success' || (inputs.channel == 'updater-test' && needs.build-docker.result == 'skipped')) }}
     name: Create the public GitHub Release
     needs: [validate-release, build-desktop, build-docker]
     runs-on: ubuntu-latest
@@ -389,13 +333,11 @@ jobs:
       - name: Validate complete signed platform manifest
         env:
           VERSION: ${{ needs.validate-release.outputs.version }}
-          CHANNEL: ${{ inputs.channel }}
-        run: node release-tools/scripts/updater-manifest.mjs assemble downloaded-assets release-assets "$VERSION" "$CHANNEL"
+        run: node release-tools/scripts/updater-manifest.mjs assemble downloaded-assets release-assets "$VERSION"
       - name: Generate SHA-256 checksums and release notes
         env:
           SOURCE_SHA: ${{ needs.validate-release.outputs.source_sha }}
           VERSION: ${{ needs.validate-release.outputs.version }}
-          CHANNEL: ${{ inputs.channel }}
         run: |
           cd release-assets
           find . -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
@@ -405,11 +347,7 @@ jobs:
 
           Built and tested from private source revision \`$SOURCE_SHA\`.
           EOF
-          if [[ "$CHANNEL" == "stable" ]]; then
-            printf '\nContainer: ghcr.io/sudo-rahman/ultra-explorer:%s\n' "$VERSION" >> release-notes.md
-          else
-            printf '\nIsolated macOS updater test; not a stable release.\n' >> release-notes.md
-          fi
+          printf '\nContainer: ghcr.io/sudo-rahman/ultra-explorer:%s\n' "$VERSION" >> release-notes.md
       - name: Attest desktop release artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
@@ -417,32 +355,14 @@ jobs:
       - name: Stage all assets then publish the complete release
         env:
           GH_TOKEN: ${{ github.token }}
-          CHANNEL: ${{ inputs.channel }}
           TAG: ${{ needs.validate-release.outputs.tag }}
           VERSION: ${{ needs.validate-release.outputs.version }}
         run: |
           set -euo pipefail
           args=("$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
             --title "Ultra Explorer $VERSION" --notes-file release-notes.md --draft)
-          if [[ "$CHANNEL" == "updater-test" ]]; then args+=(--prerelease --latest=false); fi
           gh release create "${args[@]}"
           gh release upload "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > uploaded-release.json
           node release-tools/scripts/updater-manifest.mjs verify release-assets uploaded-release.json
-          if [[ "$CHANNEL" == "stable" ]]; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
-          else
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
-          fi
-      - name: Advance isolated test feed after versioned assets are public
-        if: inputs.channel == 'updater-test'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if ! gh release view updater-test --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create updater-test --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "Updater test feed" --notes "Isolated macOS prerelease feed; never stable." --draft --prerelease --latest=false
-          fi
-          gh release upload updater-test release-assets/latest.json --repo "$GITHUB_REPOSITORY" --clobber
-          gh release edit updater-test --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

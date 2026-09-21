@@ -9,9 +9,15 @@ import {
 } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-export const expectedPlatforms = {
-  stable: ["darwin-aarch64", "linux-x86_64", "windows-x86_64"],
-  "updater-test": ["darwin-aarch64"],
+export const expectedPlatforms = [
+  "darwin-aarch64",
+  "linux-x86_64",
+  "windows-x86_64",
+];
+const platformNames = {
+  "darwin-aarch64": "macOS_arm64",
+  "linux-x86_64": "Linux_x64",
+  "windows-x86_64": "Windows_x64",
 };
 const extensions = {
   "darwin-aarch64": ".app.tar.gz",
@@ -23,10 +29,20 @@ const artifactDirectories = {
   "linux-x86_64": "appimage",
   "windows-x86_64": "nsis",
 };
-function assetName(platform, version, path) {
-  // GitHub rewrites spaces and special characters in uploaded asset names.
-  // Choose an unchanged ASCII name before both upload and manifest generation.
-  return `${platform}-${version}-${basename(path).replace(/[^A-Za-z0-9._-]+/g, "-")}`;
+export function assetName(platform, version, path) {
+  // Use a stable ASCII name: GitHub rewrites spaces in uploaded asset names.
+  const suffix = [
+    ".app.tar.gz.sig",
+    ".AppImage.sig",
+    ".exe.sig",
+    ".app.tar.gz",
+    ".AppImage",
+    ".exe",
+    ".dmg",
+  ].find((suffix) => path.endsWith(suffix));
+  if (!platformNames[platform] || !suffix)
+    throw new Error("Unsupported asset type");
+  return `UltraExplorer_${version}_${platformNames[platform]}${suffix}`;
 }
 function requireRegularFile(path) {
   const stat = lstatSync(path);
@@ -63,17 +79,13 @@ export function walk(directory) {
         : [join(directory, e.name)];
     });
 }
-export function validateVersion(version, channel) {
-  if (!expectedPlatforms[channel]) throw new Error("Unknown release channel");
-  const pattern =
-    channel === "stable"
-      ? /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
-      : /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-updater\.[1-9]\d*$/;
-  if (!pattern.test(version)) throw new Error("Invalid version for channel");
+export function validateVersion(version) {
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version))
+    throw new Error("A stable version X.Y.Z is required");
 }
-export function collect(directory, destination, platform, version, channel) {
-  validateVersion(version, channel);
-  if (!expectedPlatforms[channel].includes(platform))
+export function collect(directory, destination, platform, version) {
+  validateVersion(version);
+  if (!expectedPlatforms.includes(platform))
     throw new Error("Unexpected platform");
   requireDirectory(directory);
   const updater = finalArtifacts(
@@ -85,12 +97,12 @@ export function collect(directory, destination, platform, version, channel) {
   requireRegularFile(`${updater[0]}.sig`);
   const signature = readFileSync(`${updater[0]}.sig`, "utf8").trim();
   if (!signature) throw new Error("Empty signature");
-  const installables = [
-    updater[0],
-    ...(platform.startsWith("darwin")
-      ? finalArtifacts(join(directory, "dmg"), ".dmg")
-      : []),
-  ];
+  const installers = platform.startsWith("darwin")
+    ? finalArtifacts(join(directory, "dmg"), ".dmg")
+    : [];
+  if (platform.startsWith("darwin") && installers.length !== 1)
+    throw new Error("Expected exactly one macOS DMG installer");
+  const installables = [updater[0], ...installers];
   mkdirSync(destination, { recursive: true });
   const filename = assetName(platform, version, updater[0]);
   const names = new Set();
@@ -99,31 +111,27 @@ export function collect(directory, destination, platform, version, channel) {
     const name = assetName(platform, version, file);
     if (names.has(name)) throw new Error("Duplicate normalized asset filename");
     names.add(name);
-    copyFileSync(
-      file,
-      join(destination, name),
-    );
+    copyFileSync(file, join(destination, name));
   }
   writeFileSync(
     join(destination, `${platform}.json`),
     JSON.stringify({ platform, filename }),
   );
 }
-export function manifest(entries, version, channel, directory) {
-  validateVersion(version, channel);
+export function manifest(entries, version, directory) {
+  validateVersion(version);
   const platforms = {};
   const filenames = new Set();
   for (const { platform, filename } of [...entries].sort((a, b) =>
     a.platform.localeCompare(b.platform),
   )) {
-    if (!expectedPlatforms[channel].includes(platform) || platforms[platform])
+    if (!expectedPlatforms.includes(platform) || platforms[platform])
       throw new Error("Unexpected or duplicate platform");
     if (
       typeof filename !== "string" ||
       basename(filename) !== filename ||
       !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(filename) ||
-      !filename.startsWith(`${platform}-${version}-`) ||
-      !filename.endsWith(extensions[platform]) ||
+      filename !== assetName(platform, version, extensions[platform]) ||
       filenames.has(filename)
     )
       throw new Error("Invalid or duplicate filename");
@@ -141,7 +149,7 @@ export function manifest(entries, version, channel, directory) {
       url: `https://github.com/Sudo-Rahman/UltraExplorer-Releases/releases/download/v${version}/${encodeURIComponent(filename)}`,
     };
   }
-  if (Object.keys(platforms).length !== expectedPlatforms[channel].length)
+  if (Object.keys(platforms).length !== expectedPlatforms.length)
     throw new Error("Incomplete platform matrix");
   return { version, platforms };
 }
@@ -151,9 +159,11 @@ export function verifyUploadedNames(directory, release) {
   const expected = readdirSync(directory).sort();
   for (const name of expected) {
     requireRegularFile(join(directory, name));
-    if (!actual.has(name)) throw new Error(`GitHub asset name mismatch: ${name}`);
+    if (!actual.has(name))
+      throw new Error(`GitHub asset name mismatch: ${name}`);
   }
-  if (actual.size !== expected.length) throw new Error("Unexpected uploaded assets");
+  if (actual.size !== expected.length)
+    throw new Error("Unexpected uploaded assets");
 }
 if (
   process.argv[1] &&
@@ -162,7 +172,7 @@ if (
   const [operation, ...args] = process.argv.slice(2);
   if (operation === "collect") collect(...args);
   else if (operation === "assemble") {
-    const [input, output, version, channel] = args;
+    const [input, output, version] = args;
     mkdirSync(output, { recursive: true });
     const entries = [];
     for (const file of walk(input)) {
@@ -182,7 +192,7 @@ if (
     }
     writeFileSync(
       join(output, "latest.json"),
-      `${JSON.stringify(manifest(entries, version, channel, output), null, 2)}\n`,
+      `${JSON.stringify(manifest(entries, version, output), null, 2)}\n`,
     );
   } else if (operation === "verify") {
     const [directory, metadata] = args;

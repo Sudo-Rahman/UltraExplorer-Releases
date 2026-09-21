@@ -86,7 +86,6 @@ verified installers, checksums, and final runtime images are made public here.
 ## Signed application updates
 
 Direct desktop releases use signed updater artifacts. Stable updates require the
-complete macOS ARM64 / Windows x64 / Linux x64 matrix. Maintainers can run isolated
-public macOS prerelease tests from an exact private source SHA using the existing
-workflow on a dedicated branch, without changing main or the stable feed. See
-[release and updater test instructions](RELEASING.md).
+complete macOS ARM64 / Windows x64 / Linux x64 matrix. The application version comes
+from Cargo, and releases are built from version tags on the private main branch.
+See [publishing instructions](RELEASING.md).
