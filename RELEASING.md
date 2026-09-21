@@ -93,3 +93,8 @@ Tests cover complete/missing/duplicate platform manifests, absent or empty paylo
 and signatures, filenames/URL encoding, deterministic output, strict channel
 versions, collectors and workflow profile/isolation contracts. These tests do not
 cryptographically verify signatures or exercise hosted Actions/signing credentials.
+
+Upload filenames are normalized to ASCII letters, digits, dots, underscores, and
+hyphens before the manifest is generated. GitHub can rewrite spaces in asset names;
+URL encoding alone does not preserve those names. After draft upload, the workflow
+compares all local asset names with GitHub's actual asset list before publication.

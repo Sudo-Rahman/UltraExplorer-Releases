@@ -23,6 +23,11 @@ const artifactDirectories = {
   "linux-x86_64": "appimage",
   "windows-x86_64": "nsis",
 };
+function assetName(platform, version, path) {
+  // GitHub rewrites spaces and special characters in uploaded asset names.
+  // Choose an unchanged ASCII name before both upload and manifest generation.
+  return `${platform}-${version}-${basename(path).replace(/[^A-Za-z0-9._-]+/g, "-")}`;
+}
 function requireRegularFile(path) {
   const stat = lstatSync(path);
   if (stat.isSymbolicLink()) throw new Error("Symlink artifact rejected");
@@ -87,12 +92,16 @@ export function collect(directory, destination, platform, version, channel) {
       : []),
   ];
   mkdirSync(destination, { recursive: true });
-  const filename = `${platform}-${version}-${basename(updater[0])}`;
+  const filename = assetName(platform, version, updater[0]);
+  const names = new Set();
   for (const file of [...installables, `${updater[0]}.sig`]) {
     if (!requireRegularFile(file).size) throw new Error("Empty artifact");
+    const name = assetName(platform, version, file);
+    if (names.has(name)) throw new Error("Duplicate normalized asset filename");
+    names.add(name);
     copyFileSync(
       file,
-      join(destination, `${platform}-${version}-${basename(file)}`),
+      join(destination, name),
     );
   }
   writeFileSync(
@@ -112,7 +121,7 @@ export function manifest(entries, version, channel, directory) {
     if (
       typeof filename !== "string" ||
       basename(filename) !== filename ||
-      /[\\/\x00-\x1f\x7f]/.test(filename) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(filename) ||
       !filename.startsWith(`${platform}-${version}-`) ||
       !filename.endsWith(extensions[platform]) ||
       filenames.has(filename)
@@ -135,6 +144,16 @@ export function manifest(entries, version, channel, directory) {
   if (Object.keys(platforms).length !== expectedPlatforms[channel].length)
     throw new Error("Incomplete platform matrix");
   return { version, platforms };
+}
+
+export function verifyUploadedNames(directory, release) {
+  const actual = new Set(release.assets.map((asset) => asset.name));
+  const expected = readdirSync(directory).sort();
+  for (const name of expected) {
+    requireRegularFile(join(directory, name));
+    if (!actual.has(name)) throw new Error(`GitHub asset name mismatch: ${name}`);
+  }
+  if (actual.size !== expected.length) throw new Error("Unexpected uploaded assets");
 }
 if (
   process.argv[1] &&
@@ -165,5 +184,8 @@ if (
       join(output, "latest.json"),
       `${JSON.stringify(manifest(entries, version, channel, output), null, 2)}\n`,
     );
-  } else throw new Error("Expected collect or assemble");
+  } else if (operation === "verify") {
+    const [directory, metadata] = args;
+    verifyUploadedNames(directory, JSON.parse(readFileSync(metadata, "utf8")));
+  } else throw new Error("Expected collect, assemble or verify");
 }

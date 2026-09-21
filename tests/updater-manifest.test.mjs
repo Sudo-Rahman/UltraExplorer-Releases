@@ -16,6 +16,7 @@ import {
   manifest,
   validateVersion,
   expectedPlatforms,
+  verifyUploadedNames,
 } from "../scripts/updater-manifest.mjs";
 function fixture(t, channel = "stable") {
   const directory = mkdtempSync(join(tmpdir(), "ultra-manifest-"));
@@ -27,7 +28,7 @@ function fixture(t, channel = "stable") {
       : platform.startsWith("linux")
         ? ".AppImage"
         : ".exe";
-    const filename = `${platform}-${version}-Ultra Explorer #1${suffix}`;
+    const filename = `${platform}-${version}-Ultra-Explorer-1${suffix}`;
     writeFileSync(join(directory, filename), "test payload");
     writeFileSync(join(directory, `${filename}.sig`), "test-signature\n");
     return { platform, filename };
@@ -71,6 +72,7 @@ test("reject traversal, wrong version filename, duplicate filenames and unexpect
     "../bad.exe",
     "bad\\file.exe",
     "wrong.exe",
+    `${f.entries[0].platform}-${f.version}-Ultra Explorer.app.tar.gz`,
     f.entries[1].filename,
   ])
     assert.throws(() =>
@@ -225,4 +227,29 @@ test("collector rejects a selected DMG symlink and manifest rejects symlinked si
     () => manifest(f.entries, f.version, "updater-test", f.directory),
     /Symlink artifact/,
   );
+});
+
+test('collector normalizes upload names before constructing updater URLs', (t) => {
+  const f = fixture(t, 'updater-test');
+  const input = join(f.directory, 'bundle');
+  const output = join(f.directory, 'output');
+  mkdirSync(join(input, 'macos'), {recursive: true});
+  mkdirSync(join(input, 'dmg'));
+  writeFileSync(join(input, 'macos', 'Ultra Explorer.app.tar.gz'), 'payload');
+  writeFileSync(join(input, 'macos', 'Ultra Explorer.app.tar.gz.sig'), 'signature');
+  writeFileSync(join(input, 'dmg', 'Ultra Explorer.dmg'), 'installer');
+  collect(input, output, 'darwin-aarch64', f.version, 'updater-test');
+  const record = JSON.parse(readFileSync(join(output, 'darwin-aarch64.json'), 'utf8'));
+  assert.equal(record.filename, `darwin-aarch64-${f.version}-Ultra-Explorer.app.tar.gz`);
+  for (const name of readdirSync(output)) assert.match(name, /^[A-Za-z0-9._-]+$/);
+  const result = manifest([record], f.version, 'updater-test', output);
+  assert.equal(new URL(result.platforms['darwin-aarch64'].url).pathname.split('/').at(-1), record.filename);
+});
+
+test('publication fails before a draft becomes visible if GitHub renamed or lost an asset', (t) => {
+  const f = fixture(t, 'updater-test');
+  const names = readdirSync(f.directory);
+  assert.doesNotThrow(() => verifyUploadedNames(f.directory, {assets: names.map(name => ({name}))}));
+  assert.throws(() => verifyUploadedNames(f.directory, {assets: names.map(name => ({name: name.replace('Ultra-', 'Ultra.')}))}), /name mismatch/);
+  assert.throws(() => verifyUploadedNames(f.directory, {assets: []}), /name mismatch/);
 });
