@@ -230,3 +230,11 @@ test('macOS artifact builds reject non-ARM64 runners before signing and packagin
   assert.match(step, /exit 1/);
  }
 });
+
+test('desktop compilation exercises the direct updater configuration outside test builds', async () => {
+ const contents = await workflow(CI_PATH);
+ const step = contents.slice(contents.indexOf('      - name: Build the complete Tauri application'), contents.indexOf('  docker:'));
+ assert.match(step, /ULTRA_DISTRIBUTION:/);
+ for (const distribution of ['macos-direct', 'windows-direct', 'linux-appimage']) assert.ok(step.includes(distribution));
+ assert.match(step, /pnpm desktop:build --no-bundle --ci/);
+});
