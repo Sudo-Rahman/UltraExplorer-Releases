@@ -218,6 +218,21 @@ jobs:
       - name: Build installable Tauri bundles
         if: runner.os != 'macOS'
         run: pnpm desktop:build --ci
+      - name: Notarize and staple the macOS DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          DMG_PATH="$(find target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+          test -n "$DMG_PATH"
+          xcrun notarytool submit "$DMG_PATH" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
       - name: Verify macOS signature and notarization
         if: runner.os == 'macOS'
         shell: bash
