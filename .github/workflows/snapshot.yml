@@ -78,7 +78,7 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           case "$PLATFORM" in
             all)
-              MATRIX='{"include":[{"runner":"ubuntu-latest","artifact":"linux-x64"},{"runner":"windows-latest","artifact":"windows-x64"},{"runner":"macos-latest","artifact":"macos-arm64"},{"runner":"macos-15-intel","artifact":"macos-x64"}]}'
+              MATRIX='{"include":[{"runner":"ubuntu-latest","artifact":"linux-x64"},{"runner":"windows-latest","artifact":"windows-x64"},{"runner":"macos-latest","artifact":"macos-arm64"}]}'
               ;;
             linux)
               MATRIX='{"include":[{"runner":"ubuntu-latest","artifact":"linux-x64"}]}'
@@ -87,7 +87,7 @@ jobs:
               MATRIX='{"include":[{"runner":"windows-latest","artifact":"windows-x64"}]}'
               ;;
             macos)
-              MATRIX='{"include":[{"runner":"macos-latest","artifact":"macos-arm64"},{"runner":"macos-15-intel","artifact":"macos-x64"}]}'
+              MATRIX='{"include":[{"runner":"macos-latest","artifact":"macos-arm64"}]}'
               ;;
             *)
               echo "Unsupported platform selection: $PLATFORM" >&2
@@ -236,8 +236,9 @@ jobs:
         run: |
           gh release delete "$SNAPSHOT_TAG" \
             --repo "$PRIVATE_BUILDS_REPOSITORY" \
-            --cleanup-tag \
             --yes
+          gh api --method DELETE \
+            "repos/${PRIVATE_BUILDS_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" || true
       - name: Keep only the five newest private snapshots
         if: needs.build-desktop.result == 'success'
         env:

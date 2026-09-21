@@ -90,9 +90,10 @@ test('a manually selected private main tag runs the complete release CI', async 
 	assert.match(contents, /persist-credentials:\s+false/);
 	assertActionsArePinned(contents);
 
-	for (const runner of ['ubuntu-latest', 'windows-latest', 'macos-latest', 'macos-15-intel']) {
+	for (const runner of ['ubuntu-latest', 'windows-latest', 'macos-latest']) {
 		assert.ok(contents.includes(runner), `missing release runner: ${runner}`);
 	}
+	assert.doesNotMatch(contents, /macos-15-intel|macos-x64/);
 
 	assert.match(contents, /pnpm desktop:build --ci/);
 	assert.match(
@@ -141,4 +142,22 @@ test('Unix bundle collection excludes Debian internals from Linux snapshots and 
 		assert.match(contents, /-name '\*\.AppImage' -o\s+\\?\n?\s*-name '\*\.deb' -o/);
 		assert.match(contents, /-name '\*\.dmg' -o\s+\\?\n?\s*-name '\*\.tar\.gz'/);
 	}
+});
+
+test('snapshot and release workflows target macOS Apple Silicon only', async () => {
+	for (const path of [SNAPSHOT_PATH, RELEASE_PATH]) {
+		const contents = await workflow(path);
+
+		assert.match(contents, /macos-latest/);
+		assert.match(contents, /macos-arm64/);
+		assert.doesNotMatch(contents, /macos-15-intel|macos-x64|--bundles app/);
+	}
+});
+
+test('snapshot cleanup tolerates a draft release without a materialized Git tag', async () => {
+	const contents = await workflow(SNAPSHOT_PATH);
+
+	assert.doesNotMatch(contents, /--cleanup-tag/);
+	assert.match(contents, /gh release delete[\s\S]*--yes/);
+	assert.match(contents, /git\/refs\/tags\/\$\{SNAPSHOT_TAG\}[\s\S]*\|\| true/);
 });
