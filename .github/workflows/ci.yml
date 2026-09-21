@@ -19,6 +19,7 @@ on:
 
 env:
   ULTRA_PRODUCT_MODE: production
+  ULTRA_DISTRIBUTION: development
 
 permissions:
   contents: read
@@ -134,6 +135,7 @@ jobs:
         with:
           toolchain: 1.90.0
           components: rustfmt, clippy
+      - run: node scripts/application-version.mjs
       - run: cargo fmt --all --check
       - run: bash ./scripts/prepare-rclone-sidecar.sh
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
@@ -181,8 +183,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/prepare-rclone-sidecar.ps1
-      - run: cargo test --locked -p ultra-desktop
+      - run: cargo test --locked -p ultra-desktop --all-features
       - name: Build the complete Tauri application
+        env:
+          ULTRA_DISTRIBUTION: ${{ runner.os == 'macOS' && 'macos-direct' || runner.os == 'Windows' && 'windows-direct' || 'linux-appimage' }}
         run: pnpm desktop:build --no-bundle --ci
 
   docker:

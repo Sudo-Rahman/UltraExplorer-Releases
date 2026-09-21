@@ -82,3 +82,10 @@ verified installers, checksums, and final runtime images are made public here.
   <br /><br />
   <a href="https://ultra-explorer.app/">ultra-explorer.app</a>
 </div>
+
+## Signed application updates
+
+Direct desktop releases use signed updater artifacts. Stable updates require the
+complete macOS ARM64 / Windows x64 / Linux x64 matrix. The application version comes
+from Cargo, and releases are built from version tags on the private main branch.
+See [publishing instructions](RELEASING.md).
