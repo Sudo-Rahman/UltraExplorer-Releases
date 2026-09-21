@@ -3,12 +3,32 @@ name: Private source CI
 on:
   workflow_dispatch:
     inputs:
+      desktop_platform:
+        description: Desktop test matrix (all or macos)
+        required: false
+        default: all
+        type: string
+      skip_docker:
+        description: Skip container validation for isolated desktop tests
+        required: false
+        default: false
+        type: boolean
       source_sha:
         description: Full 40-character commit SHA from Sudo-Rahman/UltraExplorer
         required: true
         type: string
   workflow_call:
     inputs:
+      desktop_platform:
+        description: Desktop test matrix (all or macos)
+        required: false
+        default: all
+        type: string
+      skip_docker:
+        description: Skip container validation for isolated desktop tests
+        required: false
+        default: false
+        type: boolean
       source_sha:
         description: Full 40-character commit SHA from Sudo-Rahman/UltraExplorer
         required: true
@@ -19,6 +39,7 @@ on:
 
 env:
   ULTRA_PRODUCT_MODE: production
+  ULTRA_DISTRIBUTION: development
 
 permissions:
   contents: read
@@ -145,7 +166,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(inputs.desktop_platform == 'macos' && '["macos-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
     defaults:
@@ -181,11 +202,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/prepare-rclone-sidecar.ps1
-      - run: cargo test --locked -p ultra-desktop
+      - run: cargo test --locked -p ultra-desktop --all-features
       - name: Build the complete Tauri application
         run: pnpm desktop:build --no-bundle --ci
 
   docker:
+    if: ${{ !inputs.skip_docker }}
     name: Docker smoke test
     needs: [frontend, end-to-end, rust, desktop-platforms]
     runs-on: ubuntu-latest

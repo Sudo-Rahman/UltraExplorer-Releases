@@ -55,7 +55,7 @@ test('CI mirrors the private repository quality gates without source-bearing cac
 		'cargo fmt --all --check',
 		'cargo clippy --locked --workspace --all-targets --all-features -- -D warnings',
 		'cargo test --locked --workspace',
-		'cargo test --locked -p ultra-desktop',
+		'cargo test --locked -p ultra-desktop --all-features',
 		'bash ./scripts/docker-smoke.sh ultra-explorer:ci'
 	]) {
 		assert.ok(contents.includes(expected), `missing quality gate: ${expected}`);
@@ -80,22 +80,22 @@ test('a manually selected private main tag runs the complete release CI', async 
 	);
 	assert.match(
 		contents,
-		/ref:\s+\$\{\{\s*inputs\.source_tag\s*\}\}/
+		/ref:\s+\$\{\{\s*steps\.request\.outputs\.ref\s*\}\}/
 	);
 	assert.match(contents, /fetch-depth:\s+0/);
 	assert.match(contents, /git merge-base --is-ancestor HEAD origin\/main/);
 	assert.match(contents, /source_sha=\$\(git rev-parse HEAD\)/);
-	assert.match(contents, /VERSION="\$\{SOURCE_TAG#v\}"/);
+	assert.match(contents, /node release-tools\/scripts\/release-inputs\.mjs/);
 	assert.match(contents, /ssh-key:\s+\$\{\{\s*secrets\.ULTRAEXPLORER_DEPLOY_KEY\s*\}\}/);
 	assert.match(contents, /persist-credentials:\s+false/);
 	assertActionsArePinned(contents);
 
 	for (const runner of ['ubuntu-latest', 'windows-latest', 'macos-latest']) {
-		assert.ok(contents.includes(runner), `missing release runner: ${runner}`);
+		assert.ok((await workflow(new URL('../scripts/release-inputs.mjs', import.meta.url))).includes(runner), `missing release runner: ${runner}`);
 	}
 	assert.doesNotMatch(contents, /macos-15-intel|macos-x64/);
 
-	assert.match(contents, /pnpm desktop:build --ci/);
+	assert.match(contents, /pnpm desktop:build/);
 	assert.match(
 		contents,
 		/build-docker:[\s\S]*?needs:\s+\[quality, validate-release, build-desktop\]/
@@ -127,32 +127,48 @@ test('snapshot builds upload installers directly to the private builds repositor
 	assert.match(contents, /secrets\.PRIVATE_BUILDS_TOKEN/);
 	assert.match(contents, /gh release create[\s\S]*--draft/);
 	assert.match(contents, /gh release upload/);
-	assert.match(contents, /pnpm desktop:build --ci/);
+	assert.match(contents, /pnpm desktop:build/);
 	assert.match(contents, /cargo test --locked -p ultra-desktop/);
 	assert.match(contents, /needs\.resolve-source\.outputs\.matrix/);
 	assert.doesNotMatch(contents, /actions\/upload-artifact/);
 	assert.doesNotMatch(contents, /cache-to:\s*type=gha/);
 });
 
-test('Linux snapshot and release builds produce only AppImage bundles', async () => {
-	for (const path of [SNAPSHOT_PATH, RELEASE_PATH]) {
-		const contents = await workflow(path);
+test('release and snapshot use explicit distribution profiles and signature collection', async () => {
+ const release = await workflow(RELEASE_PATH);
+ const snapshot = await workflow(SNAPSHOT_PATH);
+ const inputs = await workflow(new URL('../scripts/release-inputs.mjs', import.meta.url));
+ assert.match(inputs, /distribution:'linux-appimage'/);
+ assert.match(inputs, /distribution:'windows-direct'/);
+ assert.match(inputs, /distribution:'macos-direct'/);
+ assert.match(release, /updater-manifest.mjs collect/);
+ assert.match(release, /updater-manifest.mjs assemble/);
+ assert.match(snapshot, /--distribution linux-appimage/);
+ assert.match(snapshot, /-name '\*\.sig'/);
+ assert.doesNotMatch(release + snapshot, /--bundles (?:deb|rpm)/);
+});
 
-		assert.match(contents, /if:\s+runner\.os == 'Linux'/);
-		assert.match(contents, /pnpm desktop:build --ci --bundles appimage/);
-		assert.match(contents, /if \[\[ "\$RUNNER_OS" == "macOS" \]\]/);
-		assert.match(contents, /-name '\*\.AppImage'/);
-		assert.match(contents, /-name '\*\.dmg' -o\s+\\?\n?\s*-name '\*\.tar\.gz'/);
-		assert.doesNotMatch(contents, /-name '\*\.(?:deb|rpm)'/);
-	}
+test('public test releases are isolated, exact-source and macOS only; stable is complete', async () => {
+ const release = await workflow(RELEASE_PATH);
+ const ci = await workflow(CI_PATH);
+ assert.match(release, /inputs.channel == 'updater-test' && 'macos' \|\| 'all'/);
+ assert.match(release, /skip_docker: \$\{\{ inputs.channel == 'updater-test'/);
+ assert.match(release, /Require the private tag to belong to main\n\s+if: inputs.channel == 'stable'/);
+ assert.match(release, /gh release upload updater-test release-assets\/latest.json/);
+ assert.match(release, /--draft=false --prerelease --latest=false/);
+ assert.ok(release.indexOf('updater-manifest.mjs assemble') < release.indexOf('gh release create'));
+ assert.ok(release.indexOf('gh release upload "$TAG"') < release.indexOf('gh release edit "$TAG"'));
+ assert.match(ci, /if: \$\{\{ !inputs.skip_docker \}\}/);
+ assert.match(ci, /ULTRA_DISTRIBUTION: development/);
 });
 
 test('snapshot and release workflows target macOS Apple Silicon only', async () => {
 	for (const path of [SNAPSHOT_PATH, RELEASE_PATH]) {
 		const contents = await workflow(path);
 
-		assert.match(contents, /macos-latest/);
-		assert.match(contents, /macos-arm64/);
+		const matrix = contents + await workflow(new URL('../scripts/release-inputs.mjs', import.meta.url));
+		assert.match(matrix, /macos-latest/);
+		assert.match(matrix, /macos-arm64/);
 		assert.doesNotMatch(contents, /macos-15-intel|macos-x64|--bundles app(?:\s|$)/m);
 	}
 });
@@ -192,4 +208,25 @@ test('macOS snapshot and release builds sign, notarize app and DMG, verify, and 
 		assert.match(contents, /spctl -a -vv --type exec/);
 		assert.match(contents, /security delete-keychain/);
 	}
+});
+
+ test('selected desktop CI executes optional updater verification tests without enabling development updates', async () => {
+ const contents = await workflow(CI_PATH);
+ const desktop = contents.slice(contents.indexOf('  desktop-platforms:'), contents.indexOf('  docker:'));
+ assert.match(desktop, /cargo test --locked -p ultra-desktop --all-features/);
+ assert.match(contents, /ULTRA_DISTRIBUTION: development/);
+ });
+
+
+test('macOS artifact builds reject non-ARM64 runners before signing and packaging', async () => {
+ for (const path of [RELEASE_PATH, SNAPSHOT_PATH]) {
+  const contents = await workflow(path);
+  const guard = contents.indexOf('- name: Require native Apple Silicon for macOS artifacts');
+  assert.ok(guard >= 0);
+  assert.ok(guard < contents.indexOf('- name: Prepare Apple signing and notarization'));
+  const step = contents.slice(guard, contents.indexOf('      - name:', guard + 1));
+  assert.match(step, /if: runner\.os == 'macOS'/);
+  assert.ok(step.includes('if [[ "$(uname -m)" != "arm64" ]]; then'));
+  assert.match(step, /exit 1/);
+ }
 });

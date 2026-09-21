@@ -3,21 +3,30 @@ name: Publish release
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: Stable full release or isolated public macOS updater test
+        required: true
+        default: stable
+        type: choice
+        options: [stable, updater-test]
       source_tag:
-        description: Existing version tag from private Sudo-Rahman/UltraExplorer, for example v0.1.0
-        required: true
+        description: Stable only - existing private main version tag
+        required: false
         type: string
-      prerelease:
-        description: Publish as a prerelease and do not update the latest container tag
-        required: true
-        default: false
-        type: boolean
+      source_sha:
+        description: Test only - exact private source commit (need not be on main)
+        required: false
+        type: string
+      test_version:
+        description: Test only - e.g. 0.1.1-updater.1 then 0.1.1-updater.2
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-release-${{ inputs.source_tag }}
+  group: publish-release-${{ inputs.channel }}
   cancel-in-progress: false
 
 jobs:
@@ -27,6 +36,8 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       source_sha: ${{ needs.validate-release.outputs.source_sha }}
+      desktop_platform: ${{ inputs.channel == 'updater-test' && 'macos' || 'all' }}
+      skip_docker: ${{ inputs.channel == 'updater-test' }}
     secrets: inherit
 
   validate-release:
@@ -37,34 +48,37 @@ jobs:
       source_sha: ${{ steps.release.outputs.source_sha }}
       tag: ${{ steps.request.outputs.tag }}
       version: ${{ steps.request.outputs.version }}
-      prerelease: ${{ inputs.prerelease }}
+      matrix: ${{ steps.request.outputs.matrix }}
     steps:
-      - name: Validate and normalize the private source tag
+      - name: Check out public release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          path: release-tools
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Validate release request
         id: request
         env:
+          CHANNEL: ${{ inputs.channel }}
           SOURCE_TAG: ${{ inputs.source_tag }}
-        run: |
-          if [[ ! "$SOURCE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-            echo "source_tag must be a semantic version tag such as v0.1.0" >&2
-            exit 1
-          fi
-          VERSION="${SOURCE_TAG#v}"
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-            echo "source_tag does not contain a valid semantic version" >&2
-            exit 1
-          fi
-          echo "tag=$SOURCE_TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          TEST_VERSION: ${{ inputs.test_version }}
+        run: node release-tools/scripts/release-inputs.mjs
+      - name: Test public release tooling
+        run: node --test release-tools/tests/*.test.mjs
       - name: Check out the private source revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: Sudo-Rahman/UltraExplorer
-          ref: ${{ inputs.source_tag }}
+          ref: ${{ steps.request.outputs.ref }}
           ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
           persist-credentials: false
           fetch-depth: 0
           path: source
       - name: Require the private tag to belong to main
+        if: inputs.channel == 'stable'
         working-directory: source
         run: |
           if ! git merge-base --is-ancestor HEAD origin/main; then
@@ -75,6 +89,7 @@ jobs:
         with:
           node-version: 24
       - name: Require every canonical package version to match the release
+        if: inputs.channel == 'stable'
         working-directory: source
         env:
           VERSION: ${{ steps.request.outputs.version }}
@@ -112,7 +127,14 @@ jobs:
       - name: Export the immutable private source revision
         id: release
         working-directory: source
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          REQUESTED_SHA: ${{ inputs.source_sha }}
         run: |
+          if [[ "$CHANNEL" == "updater-test" && "$(git rev-parse HEAD)" != "$REQUESTED_SHA" ]]; then
+            echo "Checkout does not match requested immutable source" >&2
+            exit 1
+          fi
           echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build-desktop:
@@ -120,20 +142,18 @@ jobs:
     needs: [quality, validate-release]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            artifact: linux-x64
-          - runner: windows-latest
-            artifact: windows-x64
-          - runner: macos-latest
-            artifact: macos-arm64
+      matrix: ${{ fromJSON(needs.validate-release.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     defaults:
       run:
         working-directory: source
     steps:
+      - name: Check out public release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          path: release-tools
       - name: Check out the private source revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -163,6 +183,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/prepare-rclone-sidecar.ps1
+      - name: Require native Apple Silicon for macOS artifacts
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [[ "$(uname -m)" != "arm64" ]]; then
+            echo "macOS artifacts require an arm64 runner; refusing to publish under an ARM64 platform key" >&2
+            exit 1
+          fi
       - name: Prepare Apple signing and notarization
         if: runner.os == 'macOS'
         shell: bash
@@ -208,19 +236,23 @@ jobs:
             echo "APPLE_CERTIFICATE_PATH=$CERTIFICATE_PATH"
             echo "APPLE_SIGNING_KEYCHAIN_PATH=$KEYCHAIN_PATH"
           } >> "$GITHUB_ENV"
-      - name: Build signed and notarized macOS bundles
-        if: runner.os == 'macOS'
+      - name: Build the selected signed updater distribution
+        shell: bash
         env:
+          DISTRIBUTION: ${{ matrix.distribution }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ needs.validate-release.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: pnpm desktop:build --ci
-      - name: Build the Linux AppImage
-        if: runner.os == 'Linux'
-        run: pnpm desktop:build --ci --bundles appimage
-      - name: Build Windows installers
-        if: runner.os == 'Windows'
-        run: pnpm desktop:build --ci
+        run: |
+          args=(--ci --distribution "$DISTRIBUTION")
+          if [[ "$CHANNEL" == "updater-test" ]]; then
+            args+=(--update-channel updater-test --test-version "$VERSION")
+          fi
+          pnpm desktop:build "${args[@]}"
       - name: Notarize and staple the macOS DMG
         if: runner.os == 'macOS'
         shell: bash
@@ -248,29 +280,13 @@ jobs:
           xcrun stapler validate "$APP_PATH"
           xcrun stapler validate "$DMG_PATH"
           spctl -a -vv --type exec "$APP_PATH"
-      - name: Collect Unix release files
-        if: runner.os != 'Windows'
+      - name: Collect exact updater payload and its signature
         shell: bash
-        run: |
-          mkdir -p release-files
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            find target/release/bundle -type f \( \
-              -name '*.dmg' -o \
-              -name '*.tar.gz' \
-            \) -exec cp {} release-files/ \;
-          else
-            find target/release/bundle -type f -name '*.AppImage' -exec cp {} release-files/ \;
-          fi
-          test -n "$(find release-files -type f -print -quit)"
-      - name: Collect Windows release files
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path release-files | Out-Null
-          $files = Get-ChildItem target/release/bundle -Recurse -File |
-            Where-Object { $_.Extension -in '.msi', '.exe', '.zip' }
-          if (-not $files) { throw 'No Windows release files were produced' }
-          $files | Copy-Item -Destination release-files
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ needs.validate-release.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: node ../release-tools/scripts/updater-manifest.mjs collect target/release/bundle release-files "$PLATFORM" "$VERSION" "$CHANNEL"
       - name: Upload installable bundles only
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -288,6 +304,7 @@ jobs:
           rm -f "${APPLE_API_KEY_PATH:-}" "${APPLE_CERTIFICATE_PATH:-}"
 
   build-docker:
+    if: inputs.channel == 'stable'
     name: Publish multi-architecture container
     needs: [quality, validate-release, build-desktop]
     runs-on: ubuntu-latest
@@ -322,7 +339,7 @@ jobs:
           images: ghcr.io/sudo-rahman/ultra-explorer
           tags: |
             type=raw,value=${{ needs.validate-release.outputs.version }}
-            type=raw,value=latest,enable=${{ needs.validate-release.outputs.prerelease != 'true' }}
+            type=raw,value=latest,enable=${{ inputs.channel == 'stable' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ needs.validate-release.outputs.source_sha }}
@@ -344,6 +361,7 @@ jobs:
           push-to-registry: true
 
   publish-release:
+    if: ${{ always() && needs.validate-release.result == 'success' && needs.build-desktop.result == 'success' && (needs.build-docker.result == 'success' || (inputs.channel == 'updater-test' && needs.build-docker.result == 'skipped')) }}
     name: Create the public GitHub Release
     needs: [validate-release, build-desktop, build-docker]
     runs-on: ubuntu-latest
@@ -354,16 +372,30 @@ jobs:
       attestations: write
       id-token: write
     steps:
+      - name: Check out public release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          path: release-tools
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
       - name: Download all desktop bundles
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: desktop-*
-          path: release-assets
-          merge-multiple: true
+          path: downloaded-assets
+          merge-multiple: false
+      - name: Validate complete signed platform manifest
+        env:
+          VERSION: ${{ needs.validate-release.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: node release-tools/scripts/updater-manifest.mjs assemble downloaded-assets release-assets "$VERSION" "$CHANNEL"
       - name: Generate SHA-256 checksums and release notes
         env:
           SOURCE_SHA: ${{ needs.validate-release.outputs.source_sha }}
           VERSION: ${{ needs.validate-release.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
         run: |
           cd release-assets
           find . -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
@@ -372,33 +404,43 @@ jobs:
           Ultra Explorer $VERSION
 
           Built and tested from private source revision \`$SOURCE_SHA\`.
-
-          Container image:
-
-          \`docker pull ghcr.io/sudo-rahman/ultra-explorer:$VERSION\`
           EOF
+          if [[ "$CHANNEL" == "stable" ]]; then
+            printf '\nContainer: ghcr.io/sudo-rahman/ultra-explorer:%s\n' "$VERSION" >> release-notes.md
+          else
+            printf '\nIsolated macOS updater test; not a stable release.\n' >> release-notes.md
+          fi
       - name: Attest desktop release artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: release-assets/*
-      - name: Publish the GitHub Release
+      - name: Stage all assets then publish the complete release
         env:
           GH_TOKEN: ${{ github.token }}
-          PRERELEASE: ${{ needs.validate-release.outputs.prerelease }}
+          CHANNEL: ${{ inputs.channel }}
           TAG: ${{ needs.validate-release.outputs.tag }}
           VERSION: ${{ needs.validate-release.outputs.version }}
         run: |
-          args=(
-            "$TAG"
-            release-assets/*
-            --repo "$GITHUB_REPOSITORY"
-            --target "$GITHUB_SHA"
-            --title "Ultra Explorer $VERSION"
-            --notes-file release-notes.md
-          )
-          if [[ "$PRERELEASE" == "true" ]]; then
-            args+=(--prerelease)
-          else
-            args+=(--latest)
-          fi
+          set -euo pipefail
+          args=("$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
+            --title "Ultra Explorer $VERSION" --notes-file release-notes.md --draft)
+          if [[ "$CHANNEL" == "updater-test" ]]; then args+=(--prerelease --latest=false); fi
           gh release create "${args[@]}"
+          gh release upload "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY"
+          if [[ "$CHANNEL" == "stable" ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+          fi
+      - name: Advance isolated test feed after versioned assets are public
+        if: inputs.channel == 'updater-test'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view updater-test --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create updater-test --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Updater test feed" --notes "Isolated macOS prerelease feed; never stable." --draft --prerelease --latest=false
+          fi
+          gh release upload updater-test release-assets/latest.json --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit updater-test --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
