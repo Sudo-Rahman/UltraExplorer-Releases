@@ -183,13 +183,18 @@ jobs:
           while IFS= read -r -d '' file; do
             cp "$file" "release-files/${ARTIFACT_PREFIX}-$(basename "$file")"
           done < <(
-            find target/release/bundle -type f \( \
-              -name '*.AppImage' -o \
-              -name '*.deb' -o \
-              -name '*.rpm' -o \
-              -name '*.dmg' -o \
-              -name '*.tar.gz' \
-            \) -print0
+            if [[ "$RUNNER_OS" == "macOS" ]]; then
+              find target/release/bundle -type f \( \
+                -name '*.dmg' -o \
+                -name '*.tar.gz' \
+              \) -print0
+            else
+              find target/release/bundle -type f \( \
+                -name '*.AppImage' -o \
+                -name '*.deb' -o \
+                -name '*.rpm' \
+              \) -print0
+            fi
           )
           test -n "$(find release-files -type f -print -quit)"
       - name: Collect Windows snapshot bundles

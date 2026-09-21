@@ -132,3 +132,13 @@ test('snapshot builds upload installers directly to the private builds repositor
 	assert.doesNotMatch(contents, /actions\/upload-artifact/);
 	assert.doesNotMatch(contents, /cache-to:\s*type=gha/);
 });
+
+test('Unix bundle collection excludes Debian internals from Linux snapshots and releases', async () => {
+	for (const path of [SNAPSHOT_PATH, RELEASE_PATH]) {
+		const contents = await workflow(path);
+
+		assert.match(contents, /if \[\[ "\$RUNNER_OS" == "macOS" \]\]/);
+		assert.match(contents, /-name '\*\.AppImage' -o\s+\\?\n?\s*-name '\*\.deb' -o/);
+		assert.match(contents, /-name '\*\.dmg' -o\s+\\?\n?\s*-name '\*\.tar\.gz'/);
+	}
+});
