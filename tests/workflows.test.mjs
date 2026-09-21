@@ -4,6 +4,8 @@ import test from 'node:test';
 
 const CI_PATH = new URL('../.github/workflows/ci.yml', import.meta.url);
 const RELEASE_PATH = new URL('../.github/workflows/release.yml', import.meta.url);
+const SNAPSHOT_PATH = new URL('../.github/workflows/snapshot.yml', import.meta.url);
+const README_PATH = new URL('../README.md', import.meta.url);
 
 async function workflow(path) {
 	return readFile(path, 'utf8');
@@ -64,14 +66,28 @@ test('CI mirrors the private repository quality gates without source-bearing cac
 	assert.doesNotMatch(contents, /actions\/upload-artifact/);
 });
 
-test('release validates a private source SHA before publishing native bundles and GHCR', async () => {
+test('a manually selected private main tag runs the complete release CI', async () => {
 	const contents = await workflow(RELEASE_PATH);
 
 	assert.match(contents, /^\s{2}workflow_dispatch:/m);
 	assertNoPublicCodeTrigger(contents);
+	assert.match(contents, /source_tag:\n\s+description:/);
 	assert.match(contents, /uses:\s+\.\/.github\/workflows\/ci\.yml/);
-	assert.match(contents, /source_sha:\s+\$\{\{\s*inputs\.source_sha\s*\}\}/);
-	assertPrivateCheckoutIsHardened(contents);
+	assert.match(contents, /needs:\s+validate-release/);
+	assert.match(
+		contents,
+		/source_sha:\s+\$\{\{\s*needs\.validate-release\.outputs\.source_sha\s*\}\}/
+	);
+	assert.match(
+		contents,
+		/ref:\s+\$\{\{\s*inputs\.source_tag\s*\}\}/
+	);
+	assert.match(contents, /fetch-depth:\s+0/);
+	assert.match(contents, /git merge-base --is-ancestor HEAD origin\/main/);
+	assert.match(contents, /source_sha=\$\(git rev-parse HEAD\)/);
+	assert.match(contents, /VERSION="\$\{SOURCE_TAG#v\}"/);
+	assert.match(contents, /ssh-key:\s+\$\{\{\s*secrets\.ULTRAEXPLORER_DEPLOY_KEY\s*\}\}/);
+	assert.match(contents, /persist-credentials:\s+false/);
 	assertActionsArePinned(contents);
 
 	for (const runner of ['ubuntu-latest', 'windows-latest', 'macos-latest', 'macos-15-intel']) {
@@ -79,11 +95,40 @@ test('release validates a private source SHA before publishing native bundles an
 	}
 
 	assert.match(contents, /pnpm desktop:build --ci/);
+	assert.match(
+		contents,
+		/build-docker:[\s\S]*?needs:\s+\[quality, validate-release, build-desktop\]/
+	);
 	assert.match(contents, /gh release create/);
 	assert.match(contents, /ghcr\.io\/sudo-rahman\/ultra-explorer/);
 	assert.match(contents, /platforms:\s+linux\/amd64,linux\/arm64/);
 	assert.match(contents, /packages:\s+write/);
 	assert.match(contents, /attestations:\s+write/);
 	assert.match(contents, /id-token:\s+write/);
+	assert.doesNotMatch(contents, /cache-to:\s*type=gha/);
+});
+
+test('README uses the transparent website logo asset', async () => {
+	const contents = await workflow(README_PATH);
+
+	assert.match(contents, /assets\/ultra-explorer\.webp/);
+	assert.doesNotMatch(contents, /assets\/ultra-explorer\.png/);
+});
+
+test('snapshot builds upload installers directly to the private builds repository', async () => {
+	const contents = await workflow(SNAPSHOT_PATH);
+
+	assert.match(contents, /^\s{2}workflow_dispatch:/m);
+	assertNoPublicCodeTrigger(contents);
+	assertPrivateCheckoutIsHardened(contents.replaceAll('inputs.source_ref', 'inputs.source_sha'));
+	assertActionsArePinned(contents);
+	assert.match(contents, /Sudo-Rahman\/UltraExplorer-Builds/);
+	assert.match(contents, /secrets\.PRIVATE_BUILDS_TOKEN/);
+	assert.match(contents, /gh release create[\s\S]*--draft/);
+	assert.match(contents, /gh release upload/);
+	assert.match(contents, /pnpm desktop:build --ci/);
+	assert.match(contents, /cargo test --locked -p ultra-desktop/);
+	assert.match(contents, /needs\.resolve-source\.outputs\.matrix/);
+	assert.doesNotMatch(contents, /actions\/upload-artifact/);
 	assert.doesNotMatch(contents, /cache-to:\s*type=gha/);
 });

@@ -3,12 +3,8 @@ name: Publish release
 on:
   workflow_dispatch:
     inputs:
-      source_sha:
-        description: Full 40-character commit SHA from Sudo-Rahman/UltraExplorer
-        required: true
-        type: string
-      version:
-        description: Release version without the leading v, matching the private source
+      source_tag:
+        description: Existing version tag from private Sudo-Rahman/UltraExplorer, for example v0.1.0
         required: true
         type: string
       prerelease:
@@ -21,15 +17,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: publish-release-${{ inputs.version }}
+  group: publish-release-${{ inputs.source_tag }}
   cancel-in-progress: false
 
 jobs:
   quality:
     name: Run the complete quality gate
+    needs: validate-release
     uses: ./.github/workflows/ci.yml
     with:
-      source_sha: ${{ inputs.source_sha }}
+      source_sha: ${{ needs.validate-release.outputs.source_sha }}
     secrets: inherit
 
   validate-release:
@@ -37,38 +34,50 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
+      tag: ${{ steps.request.outputs.tag }}
+      version: ${{ steps.request.outputs.version }}
+      prerelease: ${{ inputs.prerelease }}
     steps:
-      - name: Validate the source SHA and semantic version
+      - name: Validate and normalize the private source tag
+        id: request
         env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          VERSION: ${{ inputs.version }}
+          SOURCE_TAG: ${{ inputs.source_tag }}
         run: |
-          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "source_sha must be a lowercase 40-character commit SHA" >&2
+          if [[ ! "$SOURCE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "source_tag must be a semantic version tag such as v0.1.0" >&2
             exit 1
           fi
+          VERSION="${SOURCE_TAG#v}"
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-            echo "version must be a semantic version without a leading v" >&2
+            echo "source_tag does not contain a valid semantic version" >&2
             exit 1
           fi
+          echo "tag=$SOURCE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Check out the private source revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: Sudo-Rahman/UltraExplorer
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ inputs.source_tag }}
           ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
           persist-credentials: false
-          fetch-depth: 1
+          fetch-depth: 0
           path: source
+      - name: Require the private tag to belong to main
+        working-directory: source
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "The selected private tag is not part of main" >&2
+            exit 1
+          fi
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
       - name: Require every canonical package version to match the release
         working-directory: source
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.request.outputs.version }}
         run: |
           node <<'NODE'
           const { readFileSync } = require('node:fs');
@@ -94,19 +103,17 @@ jobs:
       - name: Reject an existing public release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v${{ inputs.version }}
+          TAG: ${{ steps.request.outputs.tag }}
         run: |
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG already exists" >&2
             exit 1
           fi
-      - name: Export normalized release metadata
+      - name: Export the immutable private source revision
         id: release
-        env:
-          VERSION: ${{ inputs.version }}
+        working-directory: source
         run: |
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build-desktop:
     name: Build ${{ matrix.artifact }}
@@ -133,7 +140,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: Sudo-Rahman/UltraExplorer
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ needs.validate-release.outputs.source_sha }}
           ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
           persist-credentials: false
           fetch-depth: 1
@@ -192,7 +199,7 @@ jobs:
 
   build-docker:
     name: Publish multi-architecture container
-    needs: [quality, validate-release]
+    needs: [quality, validate-release, build-desktop]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -205,7 +212,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: Sudo-Rahman/UltraExplorer
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ needs.validate-release.outputs.source_sha }}
           ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
           persist-credentials: false
           fetch-depth: 1
@@ -224,12 +231,12 @@ jobs:
         with:
           images: ghcr.io/sudo-rahman/ultra-explorer
           tags: |
-            type=raw,value=${{ inputs.version }}
-            type=raw,value=latest,enable=${{ !inputs.prerelease }}
+            type=raw,value=${{ needs.validate-release.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.validate-release.outputs.prerelease != 'true' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ inputs.source_sha }}
-            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.revision=${{ needs.validate-release.outputs.source_sha }}
+            org.opencontainers.image.version=${{ needs.validate-release.outputs.version }}
       - name: Build and publish the final runtime image
         id: container
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
@@ -265,7 +272,7 @@ jobs:
           merge-multiple: true
       - name: Generate SHA-256 checksums and release notes
         env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_SHA: ${{ needs.validate-release.outputs.source_sha }}
           VERSION: ${{ needs.validate-release.outputs.version }}
         run: |
           cd release-assets
@@ -287,7 +294,7 @@ jobs:
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          PRERELEASE: ${{ needs.validate-release.outputs.prerelease }}
           TAG: ${{ needs.validate-release.outputs.tag }}
           VERSION: ${{ needs.validate-release.outputs.version }}
         run: |

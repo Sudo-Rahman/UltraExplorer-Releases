@@ -1,0 +1,247 @@
+name: Snapshot build
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Private main or a full 40-character commit SHA from Sudo-Rahman/UltraExplorer
+        required: true
+        default: main
+        type: string
+      platform:
+        description: Desktop platform bundles to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - windows
+          - linux
+          - macos
+
+env:
+  ULTRA_PRODUCT_MODE: production
+  PRIVATE_BUILDS_REPOSITORY: Sudo-Rahman/UltraExplorer-Builds
+
+permissions:
+  contents: read
+
+concurrency:
+  group: snapshot-${{ inputs.source_ref }}-${{ inputs.platform }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-source:
+    name: Resolve private source revision
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.source.outputs.matrix }}
+      short_sha: ${{ steps.source.outputs.short_sha }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - name: Validate the requested private source
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          if [[ "$SOURCE_REF" != "main" && ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_ref must be main or a lowercase 40-character commit SHA" >&2
+            exit 1
+          fi
+      - name: Check out the private source revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Sudo-Rahman/UltraExplorer
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
+          persist-credentials: false
+          fetch-depth: 0
+          path: source
+      - name: Require the source revision to belong to main
+        working-directory: source
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "The selected source revision is not part of main" >&2
+            exit 1
+          fi
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Export immutable source and platform matrix
+        id: source
+        working-directory: source
+        env:
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          VERSION="$(node -p "require('./package.json').version")"
+          case "$PLATFORM" in
+            all)
+              MATRIX='{"include":[{"runner":"ubuntu-latest","artifact":"linux-x64"},{"runner":"windows-latest","artifact":"windows-x64"},{"runner":"macos-latest","artifact":"macos-arm64"},{"runner":"macos-15-intel","artifact":"macos-x64"}]}'
+              ;;
+            linux)
+              MATRIX='{"include":[{"runner":"ubuntu-latest","artifact":"linux-x64"}]}'
+              ;;
+            windows)
+              MATRIX='{"include":[{"runner":"windows-latest","artifact":"windows-x64"}]}'
+              ;;
+            macos)
+              MATRIX='{"include":[{"runner":"macos-latest","artifact":"macos-arm64"},{"runner":"macos-15-intel","artifact":"macos-x64"}]}'
+              ;;
+            *)
+              echo "Unsupported platform selection: $PLATFORM" >&2
+              exit 1
+              ;;
+          esac
+          {
+            echo "matrix=$MATRIX"
+            echo "short_sha=${SOURCE_SHA:0:12}"
+            echo "source_sha=$SOURCE_SHA"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+  prepare-snapshot:
+    name: Create private draft release
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      snapshot_tag: ${{ steps.snapshot.outputs.snapshot_tag }}
+    steps:
+      - name: Create the private snapshot destination
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_BUILDS_TOKEN }}
+          PLATFORM: ${{ inputs.platform }}
+          SHORT_SHA: ${{ needs.resolve-source.outputs.short_sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+          VERSION: ${{ needs.resolve-source.outputs.version }}
+        run: |
+          SNAPSHOT_TAG="snapshot-${SHORT_SHA}-${GITHUB_RUN_ID}"
+          gh release create "$SNAPSHOT_TAG" \
+            --repo "$PRIVATE_BUILDS_REPOSITORY" \
+            --target main \
+            --title "Ultra Explorer snapshot ${SHORT_SHA}" \
+            --notes "Private test build of Ultra Explorer ${VERSION} from ${SOURCE_REF} (${SOURCE_SHA}). Platforms: ${PLATFORM}." \
+            --draft
+          echo "snapshot_tag=$SNAPSHOT_TAG" >> "$GITHUB_OUTPUT"
+
+  build-desktop:
+    name: Build ${{ matrix.artifact }} snapshot
+    needs: [resolve-source, prepare-snapshot]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve-source.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - name: Check out the private source revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Sudo-Rahman/UltraExplorer
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+          ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: source
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.90.0
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        with:
+          version: 11.15.1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare Unix rclone sidecar
+        if: runner.os != 'Windows'
+        run: bash ./scripts/prepare-rclone-sidecar.sh
+      - name: Prepare Windows rclone sidecar
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/prepare-rclone-sidecar.ps1
+      - name: Run desktop tests
+        run: cargo test --locked -p ultra-desktop
+      - name: Build installable Tauri bundles
+        run: pnpm desktop:build --ci
+      - name: Collect Unix snapshot bundles
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          ARTIFACT_PREFIX: ${{ matrix.artifact }}
+        run: |
+          mkdir -p release-files
+          while IFS= read -r -d '' file; do
+            cp "$file" "release-files/${ARTIFACT_PREFIX}-$(basename "$file")"
+          done < <(
+            find target/release/bundle -type f \( \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.rpm' -o \
+              -name '*.dmg' -o \
+              -name '*.tar.gz' \
+            \) -print0
+          )
+          test -n "$(find release-files -type f -print -quit)"
+      - name: Collect Windows snapshot bundles
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ARTIFACT_PREFIX: ${{ matrix.artifact }}
+        run: |
+          New-Item -ItemType Directory -Force -Path release-files | Out-Null
+          $files = Get-ChildItem target/release/bundle -Recurse -File |
+            Where-Object { $_.Extension -in '.msi', '.exe', '.zip' }
+          if (-not $files) { throw 'No Windows release files were produced' }
+          foreach ($file in $files) {
+            $destination = Join-Path release-files "$env:ARTIFACT_PREFIX-$($file.Name)"
+            Copy-Item $file.FullName -Destination $destination
+          }
+      - name: Upload bundles directly to the private draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_BUILDS_TOKEN }}
+          SNAPSHOT_TAG: ${{ needs.prepare-snapshot.outputs.snapshot_tag }}
+        run: |
+          gh release upload "$SNAPSHOT_TAG" release-files/* \
+            --repo "$PRIVATE_BUILDS_REPOSITORY" \
+            --clobber
+
+  finalize-snapshot:
+    name: Finalize private snapshot
+    if: always() && needs.prepare-snapshot.result == 'success'
+    needs: [resolve-source, prepare-snapshot, build-desktop]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Remove an incomplete private snapshot
+        if: needs.build-desktop.result != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_BUILDS_TOKEN }}
+          SNAPSHOT_TAG: ${{ needs.prepare-snapshot.outputs.snapshot_tag }}
+        run: |
+          gh release delete "$SNAPSHOT_TAG" \
+            --repo "$PRIVATE_BUILDS_REPOSITORY" \
+            --cleanup-tag \
+            --yes
+      - name: Keep only the five newest private snapshots
+        if: needs.build-desktop.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_BUILDS_TOKEN }}
+        run: |
+          gh api "repos/${PRIVATE_BUILDS_REPOSITORY}/releases?per_page=100" \
+            --jq '[.[] | select(.draft and (.tag_name | startswith("snapshot-")))] | sort_by(.created_at) | reverse | .[5:] | .[] | [.id, .tag_name] | @tsv' |
+          while IFS=$'\t' read -r release_id snapshot_tag; do
+            [[ -z "$release_id" ]] && continue
+            gh api --method DELETE "repos/${PRIVATE_BUILDS_REPOSITORY}/releases/${release_id}"
+            gh api --method DELETE "repos/${PRIVATE_BUILDS_REPOSITORY}/git/refs/tags/${snapshot_tag}" || true
+          done

@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://ultra-explorer.app/">
-    <img src="assets/ultra-explorer.png" width="112" alt="Ultra Explorer" />
+    <img src="assets/ultra-explorer.webp" width="112" alt="Ultra Explorer" />
   </a>
 
   <h1>Ultra Explorer</h1>
