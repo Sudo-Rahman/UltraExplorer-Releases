@@ -8,6 +8,10 @@ on:
         required: true
         type: string
 
+env:
+  CARGO_INCREMENTAL: "0"
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+
 permissions:
   contents: read
 
@@ -22,6 +26,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       source_sha: ${{ needs.validate-release.outputs.source_sha }}
+      release_build: true
     secrets: inherit
 
   validate-release:
@@ -128,6 +133,14 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
+      - name: Restore encrypted desktop cache
+        uses: ./release-tools/.github/actions/encrypted-cache
+        with:
+          mode: restore
+          group: desktop
+          kind: native
+          dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
+          encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
       - run: pnpm install --frozen-lockfile
       - name: Prepare Unix rclone sidecar
         if: runner.os != 'Windows'
@@ -248,66 +261,80 @@ jobs:
             security delete-keychain "$APPLE_SIGNING_KEYCHAIN_PATH" || true
           fi
           rm -f "${APPLE_API_KEY_PATH:-}" "${APPLE_CERTIFICATE_PATH:-}"
+      - name: Save encrypted desktop cache
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./release-tools/.github/actions/encrypted-cache
+        with:
+          mode: save
+          group: desktop
+          kind: native
+          dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
+          encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
 
   build-docker:
-    name: Publish multi-architecture container
-    needs: [quality, validate-release, build-desktop]
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    name: Build and test native containers
+    needs: [quality, validate-release]
     permissions:
       contents: read
       packages: write
       attestations: write
       id-token: write
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      source_sha: ${{ needs.validate-release.outputs.source_sha }}
+      version: ${{ needs.validate-release.outputs.version }}
+    secrets: inherit
+
+  publish-docker:
+    name: Publish the tested multi-architecture image
+    needs: [quality, validate-release, build-desktop, build-docker]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    env:
+      IMAGE: ghcr.io/sudo-rahman/ultra-explorer
     steps:
-      - name: Check out the private source revision
+      - name: Check out public release tooling
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          repository: Sudo-Rahman/UltraExplorer
-          ref: ${{ needs.validate-release.outputs.source_sha }}
-          ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
           persist-credentials: false
-          fetch-depth: 1
-          path: source
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+          path: release-tools
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Sign in to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Generate container metadata
-        id: metadata
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+          password: ${{ github.token }}
+      - name: Download tested image digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          images: ghcr.io/sudo-rahman/ultra-explorer
-          tags: |
-            type=raw,value=${{ needs.validate-release.outputs.version }}
-            type=raw,value=latest
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ needs.validate-release.outputs.source_sha }}
-            org.opencontainers.image.version=${{ needs.validate-release.outputs.version }}
-      - name: Build and publish the final runtime image
-        id: container
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: source
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-      - name: Attest the container provenance
+          pattern: docker-digest-*
+          path: digests
+          merge-multiple: true
+      - name: Publish the complete architecture index
+        id: publish
+        env:
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: node release-tools/scripts/publish-container.mjs digests "$IMAGE" "$VERSION"
+      - name: Attest the multi-architecture index
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ghcr.io/sudo-rahman/ultra-explorer
-          subject-digest: ${{ steps.container.outputs.digest }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
           push-to-registry: true
 
   publish-release:
     name: Create the public GitHub Release
-    needs: [validate-release, build-desktop, build-docker]
+    needs: [validate-release, build-desktop, publish-docker]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release

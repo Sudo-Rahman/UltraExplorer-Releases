@@ -2,8 +2,9 @@
 
 Actions run in this public repository, checking out private source through the
 read-only `ULTRAEXPLORER_DEPLOY_KEY`. Only installable binaries, updater payloads,
-signatures, checksums and manifests are published. No source archives, private
-source caches or repository tokens are uploaded or embedded in the application.
+signatures, checksums and manifests are published. No plaintext source archives, plaintext build caches or repository tokens are
+uploaded or embedded in the application. Compilation caches and shared web assets
+are encrypted before being stored by GitHub Actions.
 All external actions remain pinned to their existing full commit SHAs.
 
 ## Stable releases
@@ -54,7 +55,8 @@ version on target systems.
 ## Credentials and protections
 
 Configure the existing `release` environment approval rules as appropriate.
-Required secrets: `ULTRAEXPLORER_DEPLOY_KEY`, `TAURI_SIGNING_PRIVATE_KEY`, and the
+Required secrets: `ULTRAEXPLORER_DEPLOY_KEY`, `TAURI_SIGNING_PRIVATE_KEY`,
+`PRIVATE_BUILD_CACHE_KEY` (base64-encoded 32 random bytes), and the
 existing Apple signing/notarization secrets (`APPLE_CERTIFICATE`,
 `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_KEY`,
 `APPLE_API_ISSUER`, `APPLE_API_PRIVATE_KEY`). Set
@@ -84,3 +86,35 @@ Upload filenames are normalized to ASCII letters, digits, dots, underscores, and
 hyphens before the manifest is generated. GitHub can rewrite spaces in asset names;
 URL encoding alone does not preserve those names. After draft upload, the workflow
 compares all local asset names with GitHub's actual asset list before publication.
+
+
+## Native builds and encrypted reuse
+
+`release.yml` calls the complete quality workflow with `release_build: true`.
+All tests remain enabled. In this mode, the release desktop packaging jobs own the
+production compilation, and the native container jobs own Docker smoke testing.
+Standalone CI retains both its desktop production builds and its Docker smoke test.
+This avoids a second production desktop compilation and a second disposable Docker
+build in the release path.
+
+The frontend job compiles the web UI once and shares `web-ui.enc`, bound to the immutable
+source revision, with both container jobs. AMD64 runs on `ubuntu-24.04`; ARM64 runs on
+`ubuntu-24.04-arm`. A machine architecture check rejects accidental emulation. Each job
+builds, loads and smoke-tests its image, then pushes that same image without rebuilding.
+Per-run staging tags retain the tested native digests. After every platform has succeeded,
+the publisher checks the proposed two-platform index and updates the version/`latest` tags.
+The GitHub release still waits for successful container publication.
+
+The encrypted-cache composite action saves Cargo registry/target directories, pnpm stores,
+and local BuildKit caches. Desktop CI and packaging share a cache family on each OS/CPU.
+Keys include toolchain, encryption-key identity and lockfiles, with compatible restore
+prefixes across source revisions. Incremental directories and desktop bundle outputs are
+excluded from Cargo caches. `cargo-chef` layers retain dependencies when workspace source
+files change. BuildKit export directories rotate after successful export instead of growing
+without bound. GitHub's cache quota/eviction policy still governs total retained snapshots.
+
+Only authenticated ciphertext goes into Actions cache storage; the key must remain a
+repository secret. Full authentication precedes extraction. Corrupt or unavailable caches
+fall back to a cold build. Never replace this with raw `target/` uploads or public BuildKit
+registry caches: those can expose private code. Docker build-record uploads are disabled.
+Rotating the cache key invalidates caches but does not affect installed app updates.

@@ -16,7 +16,9 @@ function assertNoPublicCodeTrigger(contents) {
 }
 
 function assertActionsArePinned(contents) {
-	for (const [, action, revision] of contents.matchAll(/^\s*- uses:\s+([^\s@]+)@([^\s#]+)/gm)) {
+	for (const [, action, revision] of contents.matchAll(
+		/^\s*(?:-\s*)?uses:\s+([^\s@]+)@([^\s#]+)/gm
+	)) {
 		if (action.startsWith('./')) continue;
 		assert.match(revision, /^[0-9a-f]{40}$/, `${action} must be pinned to a full commit SHA`);
 	}
@@ -41,7 +43,7 @@ test('CI only runs trusted manual or reusable invocations', async () => {
 	assertActionsArePinned(contents);
 });
 
-test('CI mirrors the private repository quality gates without source-bearing caches', async () => {
+test('CI preserves quality gates and exports only encrypted web build data', async () => {
 	const contents = await workflow(CI_PATH);
 
 	for (const expected of [
@@ -63,7 +65,8 @@ test('CI mirrors the private repository quality gates without source-bearing cac
 
 	assert.doesNotMatch(contents, /path:\s*\|[\s\S]{0,300}^\s*target\s*$/m);
 	assert.doesNotMatch(contents, /cache-to:\s*type=gha/);
-	assert.doesNotMatch(contents, /actions\/upload-artifact/);
+	assert.match(contents, /path: web-ui\.enc/);
+	assert.match(contents, /encrypted-archive\.mjs pack/);
 });
 
 test('a manually selected private main tag runs the complete release CI', async () => {
@@ -98,11 +101,11 @@ test('a manually selected private main tag runs the complete release CI', async 
 	assert.match(contents, /pnpm desktop:build/);
 	assert.match(
 		contents,
-		/build-docker:[\s\S]*?needs:\s+\[quality, validate-release, build-desktop\]/
+		/publish-docker:[\s\S]*?needs:\s+\[quality, validate-release, build-desktop, build-docker\]/
 	);
 	assert.match(contents, /gh release create/);
 	assert.match(contents, /ghcr\.io\/sudo-rahman\/ultra-explorer/);
-	assert.match(contents, /platforms:\s+linux\/amd64,linux\/arm64/);
+	assert.match(contents, /uses:\s+\.\/\.github\/workflows\/docker-build\.yml/);
 	assert.match(contents, /packages:\s+write/);
 	assert.match(contents, /attestations:\s+write/);
 	assert.match(contents, /id-token:\s+write/);
@@ -254,4 +257,59 @@ test('desktop compilation exercises the direct updater configuration outside tes
 	for (const distribution of ['macos-direct', 'windows-direct', 'linux-appimage'])
 		assert.ok(step.includes(distribution));
 	assert.match(step, /pnpm desktop:build --no-bundle --ci/);
+});
+
+test('release reuses frontend and desktop compilation while preserving runtime image tests', async () => {
+	const ci = await workflow(CI_PATH);
+	const release = await workflow(RELEASE_PATH);
+	assert.match(release, /release_build: true/);
+	assert.match(
+		ci,
+		/Build the complete Tauri application\n\s+if: \$\{\{ !inputs.release_build \}\}/
+	);
+	assert.match(ci, /docker:\n\s+if: \$\{\{ !inputs.release_build \}\}/);
+	assert.match(ci, /cargo test --locked -p ultra-desktop --all-features/);
+	assert.match(ci, /name: web-ui-encrypted/);
+	assert.match(ci, /UI_STAGE=ui-prebuilt/);
+	assert.match(release, /needs: \[validate-release, build-desktop, publish-docker\]/);
+});
+
+test('native container builds test the same image that is pushed and use separate native hosts', async () => {
+	const contents = await workflow(
+		new URL('../.github/workflows/docker-build.yml', import.meta.url)
+	);
+	assertNoPublicCodeTrigger(contents);
+	assertActionsArePinned(contents);
+	assert.match(contents, /runner: ubuntu-24.04\n/);
+	assert.match(contents, /runner: ubuntu-24.04-arm/);
+	assert.doesNotMatch(contents, /qemu/i);
+	assert.ok(contents.includes('test "$(uname -m)" = "$MACHINE"'));
+	assert.equal((contents.match(/uses: docker\/build-push-action@/g) || []).length, 1);
+	assert.match(contents, /load: true/);
+	assert.match(contents, /UI_STAGE=ui-prebuilt/);
+	assert.ok(
+		contents.indexOf('docker-smoke.sh ultra-explorer:ci') < contents.indexOf('docker push')
+	);
+	assert.ok(contents.includes('docker tag ultra-explorer:ci "$IMAGE:$candidate"'));
+	assert.match(contents, /container-digest.mjs/);
+	assert.match(contents, /cache-to: type=local/);
+	assert.match(contents, /kind: docker/);
+});
+
+test('persistent cache uploads are encrypted and public jobs do not export builder cache records', async () => {
+	const action = await workflow(
+		new URL('../.github/actions/encrypted-cache/action.yml', import.meta.url)
+	);
+	assertActionsArePinned(action);
+	assert.match(action, /PRIVATE_BUILD_CACHE_KEY/);
+	assert.match(action, /actions\/cache\/restore@/);
+	assert.match(action, /actions\/cache\/save@/);
+	assert.match(action, /private-cache.mjs/);
+	for (const path of [CI_PATH, RELEASE_PATH, SNAPSHOT_PATH]) {
+		const contents = await workflow(path);
+		assert.match(contents, /Restore encrypted/);
+		assert.match(contents, /Save encrypted/);
+		assert.doesNotMatch(contents, /cache-to: type=gha/);
+	}
+	assert.match(await workflow(CI_PATH), /DOCKER_BUILD_RECORD_UPLOAD: "false"/);
 });
