@@ -84,7 +84,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: restore
-          group: frontend
+          group: frontend-${{ inputs.release_build && 'main' || 'validation' }}
           kind: frontend
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
@@ -106,6 +106,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: web-ui-encrypted
+          overwrite: true
           path: web-ui.enc
           retention-days: 1
           if-no-files-found: error
@@ -115,7 +116,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: save
-          group: frontend
+          group: frontend-${{ inputs.release_build && 'main' || 'validation' }}
           kind: frontend
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
@@ -156,7 +157,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: restore
-          group: e2e
+          group: e2e-${{ inputs.release_build && 'main' || 'validation' }}
           kind: native
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
@@ -172,7 +173,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: save
-          group: e2e
+          group: e2e-${{ inputs.release_build && 'main' || 'validation' }}
           kind: native
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
@@ -210,7 +211,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: restore
-          group: rust
+          group: rust-${{ inputs.release_build && 'main' || 'validation' }}
           kind: native
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
@@ -225,7 +226,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: save
-          group: rust
+          group: rust-${{ inputs.release_build && 'main' || 'validation' }}
           kind: native
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
@@ -273,7 +274,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: restore
-          group: desktop
+          group: desktop-${{ inputs.release_build && 'main' || 'validation' }}
           kind: native
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
@@ -297,7 +298,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: save
-          group: desktop
+          group: desktop-${{ inputs.release_build && 'main' || 'validation' }}
           kind: native
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
@@ -336,7 +337,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: restore
-          group: docker
+          group: docker-${{ inputs.release_build && 'main' || 'validation' }}
           kind: docker
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
@@ -377,7 +378,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: save
-          group: docker
+          group: docker-${{ inputs.release_build && 'main' || 'validation' }}
           kind: docker
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}

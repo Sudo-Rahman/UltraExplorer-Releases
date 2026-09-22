@@ -171,7 +171,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: restore
-          group: desktop
+          group: desktop-main
           kind: native
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
@@ -343,7 +343,7 @@ jobs:
         uses: ./release-tools/.github/actions/encrypted-cache
         with:
           mode: save
-          group: desktop
+          group: desktop-main
           kind: native
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}

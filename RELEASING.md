@@ -106,7 +106,9 @@ the publisher checks the proposed two-platform index and updates the version/`la
 The GitHub release still waits for successful container publication.
 
 The encrypted-cache composite action saves Cargo registry/target directories, pnpm stores,
-and local BuildKit caches. Desktop CI and packaging share a cache family on each OS/CPU.
+and local BuildKit caches. Release-mode desktop CI and packaging share a cache family on each OS/CPU.
+Standalone validation uses a separate namespace, so branch-test cache snapshots
+are not restored by production release jobs.
 Keys include toolchain, encryption-key identity and lockfiles, with compatible restore
 prefixes across source revisions. Incremental directories and desktop bundle outputs are
 excluded from Cargo caches. `cargo-chef` layers retain dependencies when workspace source
