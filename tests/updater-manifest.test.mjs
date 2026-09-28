@@ -17,6 +17,7 @@ import {
   manifest,
   validateVersion,
   expectedPlatforms,
+  selectedPlatforms,
   verifyUploadedNames,
 } from "../scripts/updater-manifest.mjs";
 function fixture(t) {
@@ -282,4 +283,16 @@ test("macOS collection requires exactly one installation DMG", (t) => {
   writeFileSync(join(input, "dmg", "First.dmg"), "installer");
   writeFileSync(join(input, "dmg", "Second.dmg"), "installer");
   assert.throws(run, /exactly one macOS DMG/);
+});
+test("a release manifest contains exactly the selected platforms", (t) => {
+  const f = fixture(t);
+  const selected = selectedPlatforms("darwin-aarch64,windows-x86_64");
+  const subset = f.entries.filter((entry) => selected.includes(entry.platform));
+  const result = manifest(subset, f.version, f.directory, selected);
+  assert.deepEqual(Object.keys(result.platforms), ["darwin-aarch64", "windows-x86_64"]);
+  assert.throws(() => manifest(f.entries, f.version, f.directory, selected), /Unexpected/);
+  assert.throws(() => manifest(subset.slice(1), f.version, f.directory, selected), /Incomplete/);
+  assert.deepEqual(selectedPlatforms(undefined), expectedPlatforms);
+  for (const list of ["", "ios-arm64", "darwin-aarch64,darwin-aarch64"])
+    assert.throws(() => selectedPlatforms(list), /Invalid platform selection/);
 });

@@ -19,15 +19,19 @@ tag. Dispatch the release workflow from this repository's `main`:
 
 ```bash
 gh workflow run release.yml --repo Sudo-Rahman/UltraExplorer-Releases \
-  --ref main -f source_tag=v1.0.0
+  --ref main -f source_tag=v1.0.1 -f platforms=macos,windows
 ```
+
+`platforms` selects the desktop platforms to publish among `macos`, `windows` and `linux`
+(all three by default). A platform published by the previous release must stay selected:
+installed applications read the latest `latest.json`, so dropping it would break their updates.
 
 The workflow rejects prereleases, a tag outside private main, a version that differs
 from Cargo, and existing public releases. It resolves the tag once to an immutable
 source SHA used by all quality checks and builds. Every run includes the full
-frontend/PWA/E2E/Rust quality gate, macOS ARM64, Windows x64, Linux x64 AppImage,
-and Docker for amd64/arm64. Store, Flatpak and Snap packaging are separate; no
-DEB/RPM bundles are produced. There are no test-channel or platform-skip inputs.
+frontend/PWA/E2E/Rust quality gate, the selected desktop platforms (macOS ARM64, Windows x64,
+Linux x64 AppImage) and Docker for amd64/arm64. Store, Flatpak and Snap packaging are separate;
+no DEB/RPM bundles are produced. There are no test-channel inputs.
 
 Installers and updater payloads have deterministic ASCII names:
 
@@ -37,7 +41,7 @@ Installers and updater payloads have deterministic ASCII names:
 - `UltraExplorer_1.0.0_Linux_x64.AppImage` and `.sig` for Linux.
 
 The collector requires one signed updater payload per platform. Manifest assembly
-requires all three platforms and generates `latest.json` with versioned URLs and
+requires exactly the selected platforms and generates `latest.json` with versioned URLs and
 signature contents. Checksums and provenance accompany the assets. All files are
 uploaded to a draft and their GitHub names verified before publication as latest
 stable. Failure leaves the draft unpublished; inspect it before deleting/retrying.
