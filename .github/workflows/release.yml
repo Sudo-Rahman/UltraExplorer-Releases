@@ -80,6 +80,19 @@ jobs:
         env:
           VERSION: ${{ steps.request.outputs.version }}
         run: node scripts/application-version.mjs "$VERSION"
+      - name: Extract the release notes from the private changelog
+        working-directory: source
+        env:
+          VERSION: ${{ steps.request.outputs.version }}
+        # Fails when CHANGELOG.md has no section for this version, before anything is built.
+        run: node scripts/changelog.mjs section "$VERSION" > ../changelog-section.md
+      - name: Keep the release notes for publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-notes
+          path: changelog-section.md
+          if-no-files-found: error
+          retention-days: 7
       - name: Reject an existing public release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -357,6 +370,11 @@ jobs:
           pattern: desktop-*
           path: downloaded-assets
           merge-multiple: false
+      - name: Download the release notes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-notes
+          path: release-notes-source
       - name: Validate complete signed platform manifest
         env:
           VERSION: ${{ needs.validate-release.outputs.version }}
@@ -369,12 +387,10 @@ jobs:
           cd release-assets
           find . -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
           cd ..
-          cat > release-notes.md <<EOF
-          Ultra Explorer $VERSION
-
-          Built and tested from private source revision \`$SOURCE_SHA\`.
-          EOF
-          printf '\nContainer: ghcr.io/sudo-rahman/ultra-explorer:%s\n' "$VERSION" >> release-notes.md
+          # User-facing notes come from the CHANGELOG.md section of this version.
+          cp release-notes-source/changelog-section.md release-notes.md
+          printf '\n---\n\nContainer: `ghcr.io/sudo-rahman/ultra-explorer:%s`\n\nBuilt and tested from private source revision `%s`.\n' \
+            "$VERSION" "$SOURCE_SHA" >> release-notes.md
       - name: Attest desktop release artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
