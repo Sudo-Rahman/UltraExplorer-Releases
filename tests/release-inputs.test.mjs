@@ -91,3 +91,22 @@ test("a platform published by the previous release cannot be dropped", (t) => {
   const first = request(t, { SOURCE_TAG: "v1.0.1", PLATFORMS: "macos", PREVIOUS_MANIFEST: join(directory, "none.json") });
   assert.equal(first.status, 0);
 });
+test("a platform whose payload was withdrawn from the previous release does not bind", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "ultra-previous-assets-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const base = "https://github.com/Sudo-Rahman/UltraExplorer-Releases/releases/download/v1.0.0/";
+  const previous = join(directory, "latest.json");
+  writeFileSync(previous, JSON.stringify({ version: "1.0.0", platforms: {
+    "darwin-aarch64": { url: `${base}UltraExplorer_1.0.0_macOS_arm64.app.tar.gz` },
+    "linux-x86_64": { url: `${base}UltraExplorer_1.0.0_Linux_x64.AppImage` },
+  } }));
+  const assets = join(directory, "assets.json");
+  writeFileSync(assets, JSON.stringify({ assets: [{ name: "UltraExplorer_1.0.0_macOS_arm64.app.tar.gz" }] }));
+  const env = { SOURCE_TAG: "v1.0.1", PREVIOUS_MANIFEST: previous, PREVIOUS_ASSETS: assets };
+  assert.equal(request(t, { ...env, PLATFORMS: "macos,windows" }).status, 0);
+  assert.notEqual(request(t, { ...env, PLATFORMS: "windows" }).status, 0);
+  writeFileSync(assets, JSON.stringify({ assets: [
+    { name: "UltraExplorer_1.0.0_macOS_arm64.app.tar.gz" }, { name: "UltraExplorer_1.0.0_Linux_x64.AppImage" },
+  ] }));
+  assert.notEqual(request(t, { ...env, PLATFORMS: "macos,windows" }).status, 0);
+});

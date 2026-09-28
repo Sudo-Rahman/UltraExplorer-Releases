@@ -44,10 +44,17 @@ const platforms = matrix.map((entry) => entry.platform);
 if (platforms.some((platform) => !expectedPlatforms.includes(platform)))
   throw new Error("Unsupported updater platform");
 // Installed applications read the latest manifest: a platform published before must stay in
-// every later release, or its users would lose updates.
+// every later release, or its users would lose updates. A platform whose payload is no longer an
+// asset of the previous release already cannot update, so it does not bind the next one.
 const previous = process.env.PREVIOUS_MANIFEST;
 if (previous && existsSync(previous)) {
-  const published = Object.keys(JSON.parse(readFileSync(previous, "utf8")).platforms ?? {});
+  const assetsFile = process.env.PREVIOUS_ASSETS;
+  const assets = assetsFile && existsSync(assetsFile)
+    ? new Set(JSON.parse(readFileSync(assetsFile, "utf8")).assets.map((asset) => asset.name))
+    : null;
+  const published = Object.entries(JSON.parse(readFileSync(previous, "utf8")).platforms ?? {})
+    .filter(([, entry]) => !assets || assets.has(decodeURIComponent(String(entry.url ?? "").split("/").pop())))
+    .map(([platform]) => platform);
   const dropped = published.filter((platform) => !platforms.includes(platform));
   if (dropped.length)
     throw new Error(`The previous release published ${dropped.join(", ")}; keep it selected`);

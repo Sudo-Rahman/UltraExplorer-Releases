@@ -25,6 +25,8 @@ gh workflow run release.yml --repo Sudo-Rahman/UltraExplorer-Releases \
 `platforms` selects the desktop platforms to publish among `macos`, `windows` and `linux`
 (all three by default). A platform published by the previous release must stay selected:
 installed applications read the latest `latest.json`, so dropping it would break their updates.
+A platform whose payload is no longer an asset of the previous release does not count: its
+installations already cannot update.
 
 The workflow rejects prereleases, a tag outside private main, a version that differs
 from Cargo, and existing public releases. It resolves the tag once to an immutable

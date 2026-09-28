@@ -165,6 +165,7 @@ test('public releases require main, Cargo version parity and the full quality ma
 	// Platforms are selected explicitly (all by default); a previously published one cannot be dropped.
 	assert.match(release, /platforms:\n\s+description:[^\n]*\n\s+required: true\n\s+default: macos,windows,linux/);
 	assert.match(release, /PREVIOUS_MANIFEST: previous-release\/latest\.json/);
+	assert.match(release, /PREVIOUS_ASSETS: previous-release\/assets\.json/);
 	assert.match(release, /updater-manifest\.mjs assemble downloaded-assets release-assets "\$VERSION" "\$PLATFORMS"/);
 	assert.ok(
 		release.indexOf('updater-manifest.mjs assemble') < release.indexOf('gh release create')
