@@ -61,6 +61,7 @@ jobs:
         run: |
           if gh release view --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release download --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir previous-release
+            gh release view --repo "$GITHUB_REPOSITORY" --json assets > previous-release/assets.json
           fi
       - name: Validate release request
         id: request
@@ -68,6 +69,7 @@ jobs:
           SOURCE_TAG: ${{ inputs.source_tag }}
           PLATFORMS: ${{ inputs.platforms }}
           PREVIOUS_MANIFEST: previous-release/latest.json
+          PREVIOUS_ASSETS: previous-release/assets.json
         run: node release-tools/scripts/release-inputs.mjs
       - name: Test public release tooling
         run: node --test release-tools/tests/*.test.mjs
