@@ -118,14 +118,24 @@ export function collect(directory, destination, platform, version) {
     JSON.stringify({ platform, filename }),
   );
 }
-export function manifest(entries, version, directory) {
+export function selectedPlatforms(list) {
+  const platforms = list === undefined ? [...expectedPlatforms] : list.split(",");
+  if (
+    platforms.length === 0 ||
+    new Set(platforms).size !== platforms.length ||
+    platforms.some((platform) => !expectedPlatforms.includes(platform))
+  )
+    throw new Error("Invalid platform selection");
+  return platforms;
+}
+export function manifest(entries, version, directory, selected = expectedPlatforms) {
   validateVersion(version);
   const platforms = {};
   const filenames = new Set();
   for (const { platform, filename } of [...entries].sort((a, b) =>
     a.platform.localeCompare(b.platform),
   )) {
-    if (!expectedPlatforms.includes(platform) || platforms[platform])
+    if (!selected.includes(platform) || platforms[platform])
       throw new Error("Unexpected or duplicate platform");
     if (
       typeof filename !== "string" ||
@@ -149,7 +159,7 @@ export function manifest(entries, version, directory) {
       url: `https://github.com/Sudo-Rahman/UltraExplorer-Releases/releases/download/v${version}/${encodeURIComponent(filename)}`,
     };
   }
-  if (Object.keys(platforms).length !== expectedPlatforms.length)
+  if (Object.keys(platforms).length !== selected.length)
     throw new Error("Incomplete platform matrix");
   return { version, platforms };
 }
@@ -172,7 +182,8 @@ if (
   const [operation, ...args] = process.argv.slice(2);
   if (operation === "collect") collect(...args);
   else if (operation === "assemble") {
-    const [input, output, version] = args;
+    const [input, output, version, platformList] = args;
+    const selected = selectedPlatforms(platformList);
     mkdirSync(output, { recursive: true });
     const entries = [];
     for (const file of walk(input)) {
@@ -192,7 +203,7 @@ if (
     }
     writeFileSync(
       join(output, "latest.json"),
-      `${JSON.stringify(manifest(entries, version, output), null, 2)}\n`,
+      `${JSON.stringify(manifest(entries, version, output, selected), null, 2)}\n`,
     );
   } else if (operation === "verify") {
     const [directory, metadata] = args;

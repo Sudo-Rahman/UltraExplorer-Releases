@@ -7,6 +7,11 @@ on:
         description: Existing private main tag matching the Cargo version (vX.Y.Z)
         required: true
         type: string
+      platforms:
+        description: Desktop platforms to publish (comma-separated macos, windows, linux)
+        required: true
+        default: macos,windows,linux
+        type: string
 
 env:
   CARGO_INCREMENTAL: "0"
@@ -38,6 +43,7 @@ jobs:
       tag: ${{ steps.request.outputs.tag }}
       version: ${{ steps.request.outputs.version }}
       matrix: ${{ steps.request.outputs.matrix }}
+      platforms: ${{ steps.request.outputs.platforms }}
     steps:
       - name: Require release tooling from main
         run: test "$GITHUB_REF" = refs/heads/main
@@ -49,10 +55,19 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
+      - name: Read the platforms of the previous public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir previous-release
+          fi
       - name: Validate release request
         id: request
         env:
           SOURCE_TAG: ${{ inputs.source_tag }}
+          PLATFORMS: ${{ inputs.platforms }}
+          PREVIOUS_MANIFEST: previous-release/latest.json
         run: node release-tools/scripts/release-inputs.mjs
       - name: Test public release tooling
         run: node --test release-tools/tests/*.test.mjs
@@ -378,7 +393,8 @@ jobs:
       - name: Validate complete signed platform manifest
         env:
           VERSION: ${{ needs.validate-release.outputs.version }}
-        run: node release-tools/scripts/updater-manifest.mjs assemble downloaded-assets release-assets "$VERSION"
+          PLATFORMS: ${{ needs.validate-release.outputs.platforms }}
+        run: node release-tools/scripts/updater-manifest.mjs assemble downloaded-assets release-assets "$VERSION" "$PLATFORMS"
       - name: Generate SHA-256 checksums and release notes
         env:
           SOURCE_SHA: ${{ needs.validate-release.outputs.source_sha }}
