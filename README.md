@@ -34,7 +34,9 @@
 
 <p align="center"><strong>▶ Watch the trailer (1:52)</strong></p>
 
-https://github.com/user-attachments/assets/360288c5-6a14-4dd9-83fd-5dc2aeea59dc
+
+https://github.com/user-attachments/assets/7ac566d6-2f84-4c23-afdf-7bea404a6d4b
+
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-explorer-dark.webp" />
