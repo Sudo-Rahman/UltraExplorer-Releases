@@ -8,6 +8,9 @@ on:
         required: true
         default: main
         type: string
+  # TEMPORARY: workflow_dispatch needs the file on main; remove before merging.
+  push:
+    branches: [feat/flatpak]
 
 env:
   ULTRA_PRODUCT_MODE: production
@@ -37,7 +40,7 @@ jobs:
       - name: Validate the requested private source
         working-directory: .
         env:
-          SOURCE_REF: ${{ inputs.source_ref }}
+          SOURCE_REF: ${{ inputs.source_ref || 'main' }}
         run: |
           if [[ "$SOURCE_REF" != "main" && ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
             echo "source_ref must be main or a lowercase 40-character commit SHA" >&2
@@ -190,7 +193,7 @@ jobs:
         working-directory: .
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_BUILDS_TOKEN }}
-          SOURCE_REF: ${{ inputs.source_ref }}
+          SOURCE_REF: ${{ inputs.source_ref || 'main' }}
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/flatpak-out"
