@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Ultra Explorer
+Comment=A file manager for all your clouds
+Exec=ultra-explorer
+Icon=com.ultraexplorer.desktop
+Terminal=false
+Categories=Utility;FileTools;Network;
+Keywords=rclone;cloud;storage;transfer;sync;
+StartupNotify=true

@@ -318,3 +318,25 @@ test('persistent cache uploads are encrypted and public jobs do not export build
 	}
 	assert.match(await workflow(CI_PATH), /DOCKER_BUILD_RECORD_UPLOAD: "false"/);
 });
+
+test('Flatpak test builds repackage the flatpak distribution into the private builds repository', async () => {
+	const contents = await workflow(new URL('../.github/workflows/flatpak.yml', import.meta.url));
+
+	assert.match(contents, /^\s{2}workflow_dispatch:/m);
+	assertNoPublicCodeTrigger(contents);
+	assertPrivateCheckoutIsHardened(contents.replaceAll('inputs.source_ref', 'inputs.source_sha'));
+	assertActionsArePinned(contents);
+	assert.match(contents, /git merge-base --is-ancestor HEAD origin\/main/);
+	assert.match(contents, /pnpm desktop:build --ci --no-bundle --distribution linux-flatpak/);
+	assert.match(contents, /flatpak-builder --user/);
+	assert.match(contents, /flatpak build-bundle --runtime-repo=/);
+	assert.match(contents, /Sudo-Rahman\/UltraExplorer-Builds/);
+	assert.match(contents, /secrets\.PRIVATE_BUILDS_TOKEN/);
+	assert.match(contents, /gh release create[\s\S]*--draft/);
+	assert.doesNotMatch(contents, /actions\/upload-artifact/);
+	assert.doesNotMatch(contents, /TAURI_SIGNING_PRIVATE_KEY|self-update/);
+	assert.ok(
+		contents.indexOf('Launch the installed application') <
+			contents.indexOf('Publish the bundle to a private draft release')
+	);
+});

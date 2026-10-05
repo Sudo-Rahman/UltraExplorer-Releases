@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.ultraexplorer.desktop</id>
+  <name>Ultra Explorer</name>
+  <summary>A file manager for all your clouds</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>PolyForm-Noncommercial-1.0.0</project_license>
+  <developer id="app.ultra-explorer">
+    <name>Ultra Explorer</name>
+  </developer>
+  <description>
+    <p>
+      Browse, transfer, synchronize and analyze your files across Google Drive, OneDrive, S3,
+      Dropbox, your NAS and 40+ other storages, side by side in one fast dual-pane app.
+      Powered by rclone, with no server of ours in the middle.
+    </p>
+    <ul>
+      <li>Dual-pane explorer for local folders and remote storages</li>
+      <li>Transfer queue with conflict decisions and cancellation</li>
+      <li>Synchronizations, space analysis and multi-cloud search</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.ultraexplorer.desktop.desktop</launchable>
+  <url type="homepage">https://ultra-explorer.app/</url>
+  <url type="help">https://ultra-explorer.app/docs</url>
+  <categories>
+    <category>Utility</category>
+    <category>FileTools</category>
+  </categories>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="@VERSION@" date="@DATE@" />
+  </releases>
+</component>

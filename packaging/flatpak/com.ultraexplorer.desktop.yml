@@ -1,0 +1,33 @@
+# Repackages the Linux binary built by `pnpm desktop:build --no-bundle --distribution linux-flatpak`.
+# The private source cannot be fetched by flatpak-builder, so the workflow stages the compiled
+# executable, the pinned rclone sidecar, the icons and the rendered metadata into `payload/`.
+id: com.ultraexplorer.desktop
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+command: ultra-explorer
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Remote storages, OAuth callbacks and licensing.
+  - --share=network
+  # Local folders are browsed and transferred directly, not through the file chooser portal.
+  - --filesystem=home
+modules:
+  - name: ultra-explorer
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: payload
+    build-commands:
+      # The application resolves the rclone sidecar next to its own executable.
+      - install -Dm755 ultra-explorer /app/bin/ultra-explorer
+      - install -Dm755 rclone /app/bin/rclone
+      - install -Dm644 com.ultraexplorer.desktop.desktop /app/share/applications/com.ultraexplorer.desktop.desktop
+      - install -Dm644 com.ultraexplorer.desktop.metainfo.xml /app/share/metainfo/com.ultraexplorer.desktop.metainfo.xml
+      - |
+        for size in 32 64 128 256 512; do
+          install -Dm644 "icons/${size}.png" "/app/share/icons/hicolor/${size}x${size}/apps/com.ultraexplorer.desktop.png"
+        done

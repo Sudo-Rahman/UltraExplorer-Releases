@@ -1,0 +1,204 @@
+name: Flatpak test build
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Private main or a full 40-character commit SHA from Sudo-Rahman/UltraExplorer
+        required: true
+        default: main
+        type: string
+
+env:
+  ULTRA_PRODUCT_MODE: production
+  CARGO_INCREMENTAL: "0"
+  PRIVATE_BUILDS_REPOSITORY: Sudo-Rahman/UltraExplorer-Builds
+  FLATPAK_ID: com.ultraexplorer.desktop
+  GNOME_RUNTIME_VERSION: "50"
+  FLATHUB_REPO: https://dl.flathub.org/repo/flathub.flatpakrepo
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flatpak-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-flatpak:
+    name: Build and test the Flatpak bundle
+    # Ubuntu 24.04 links against glibc 2.39, older than the GNOME runtime's glibc.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - name: Validate the requested private source
+        working-directory: .
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          if [[ "$SOURCE_REF" != "main" && ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_ref must be main or a lowercase 40-character commit SHA" >&2
+            exit 1
+          fi
+      - name: Check out public release tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          path: release-tools
+      - name: Check out the private source revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Sudo-Rahman/UltraExplorer
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
+          persist-credentials: false
+          fetch-depth: 0
+          path: source
+      - name: Require the source revision to belong to main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "The selected source revision is not part of main" >&2
+            exit 1
+          fi
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          {
+            echo "SOURCE_SHA=$SOURCE_SHA"
+            echo "SHORT_SHA=${SOURCE_SHA:0:12}"
+            echo "VERSION=$(node -p "require('./package.json').version")"
+          } >> "$GITHUB_ENV"
+      - name: Install Linux desktop and Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
+            flatpak flatpak-builder appstream xvfb imagemagick dbus
+          # flatpak-builder and flatpak run need bubblewrap user namespaces.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.90.0
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        with:
+          version: 11.15.1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Restore encrypted desktop cache
+        uses: ./release-tools/.github/actions/encrypted-cache
+        with:
+          mode: restore
+          group: desktop-main
+          kind: native
+          dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
+          encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare Unix rclone sidecar
+        run: bash ./scripts/prepare-rclone-sidecar.sh
+      - name: Build the Flatpak distribution binary
+        run: pnpm desktop:build --ci --no-bundle --distribution linux-flatpak
+      - name: Stage the Flatpak payload
+        run: |
+          set -euo pipefail
+          payload=../release-tools/packaging/flatpak/payload
+          icons=apps/desktop/src-tauri/icons
+          rm -rf "$payload"
+          mkdir -p "$payload/icons"
+          install -m 0755 target/release/ultra-desktop "$payload/ultra-explorer"
+          install -m 0755 apps/desktop/src-tauri/binaries/rclone-x86_64-unknown-linux-gnu "$payload/rclone"
+          install -m 0644 "$icons/32x32.png" "$payload/icons/32.png"
+          install -m 0644 "$icons/64x64.png" "$payload/icons/64.png"
+          install -m 0644 "$icons/128x128.png" "$payload/icons/128.png"
+          install -m 0644 "$icons/128x128@2x.png" "$payload/icons/256.png"
+          install -m 0644 "$icons/icon.png" "$payload/icons/512.png"
+          install -m 0644 "../release-tools/packaging/flatpak/$FLATPAK_ID.desktop" "$payload/"
+          sed -e "s/@VERSION@/$VERSION/" -e "s/@DATE@/$(date -u +%F)/" \
+            "../release-tools/packaging/flatpak/$FLATPAK_ID.metainfo.xml.in" \
+            > "$payload/$FLATPAK_ID.metainfo.xml"
+          echo "Newest glibc symbol required by the binary:"
+          objdump -T "$payload/ultra-explorer" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+      - name: Validate the desktop entry and AppStream metadata
+        working-directory: release-tools/packaging/flatpak/payload
+        run: |
+          desktop-file-validate "$FLATPAK_ID.desktop"
+          appstreamcli validate --no-net --explain "$FLATPAK_ID.metainfo.xml"
+      - name: Install the GNOME runtime and SDK
+        working-directory: .
+        run: |
+          flatpak remote-add --user --if-not-exists flathub "$FLATHUB_REPO"
+          flatpak install --user --noninteractive --assumeyes flathub \
+            "org.gnome.Platform//$GNOME_RUNTIME_VERSION" \
+            "org.gnome.Sdk//$GNOME_RUNTIME_VERSION" \
+            org.flatpak.Builder
+      - name: Build the Flatpak repository and bundle
+        working-directory: release-tools/packaging/flatpak
+        run: |
+          set -euo pipefail
+          flatpak-builder --user --force-clean --disable-rofiles-fuse \
+            --state-dir="$RUNNER_TEMP/flatpak-state" \
+            --repo="$RUNNER_TEMP/flatpak-repo" \
+            "$RUNNER_TEMP/flatpak-build" "$FLATPAK_ID.yml"
+          mkdir -p "$RUNNER_TEMP/flatpak-out"
+          BUNDLE="$RUNNER_TEMP/flatpak-out/UltraExplorer_${VERSION}_linux_x86_64.flatpak"
+          # The runtime repository lets `flatpak install` fetch the GNOME runtime from Flathub.
+          flatpak build-bundle --runtime-repo="$FLATHUB_REPO" \
+            "$RUNNER_TEMP/flatpak-repo" "$BUNDLE" "$FLATPAK_ID"
+          echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
+      # Flathub's linter is informative here: submission requirements are handled separately.
+      - name: Lint the manifest with flatpak-builder-lint
+        continue-on-error: true
+        working-directory: release-tools/packaging/flatpak
+        run: flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest "$FLATPAK_ID.yml"
+      - name: Lint the built repository with flatpak-builder-lint
+        continue-on-error: true
+        working-directory: .
+        run: flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo "$RUNNER_TEMP/flatpak-repo"
+      - name: Install the bundle and resolve its libraries
+        working-directory: .
+        run: |
+          set -euo pipefail
+          flatpak install --user --noninteractive --assumeyes "$BUNDLE"
+          flatpak run --command=sh "$FLATPAK_ID" -c 'ldd /app/bin/ultra-explorer' | tee "$RUNNER_TEMP/ldd.txt"
+          if grep -q 'not found' "$RUNNER_TEMP/ldd.txt"; then
+            echo "The GNOME runtime does not provide every library the binary needs" >&2
+            exit 1
+          fi
+          flatpak run --command=/app/bin/rclone "$FLATPAK_ID" version
+      - name: Launch the installed application under Xvfb
+        working-directory: .
+        run: |
+          set -euo pipefail
+          SCREENSHOT="$RUNNER_TEMP/flatpak-out/UltraExplorer_${VERSION}_linux_x86_64-launch.png"
+          dbus-run-session -- bash -euo pipefail -c '
+            Xvfb :99 -screen 0 1440x900x24 &
+            export DISPLAY=:99
+            sleep 2
+            flatpak run "$FLATPAK_ID" > "$RUNNER_TEMP/app.log" 2>&1 &
+            app=$!
+            sleep 30
+            import -window root "$1" || true
+            if ! kill -0 "$app" 2>/dev/null; then
+              echo "The application exited during startup" >&2
+              cat "$RUNNER_TEMP/app.log" >&2
+              exit 1
+            fi
+            flatpak kill "$FLATPAK_ID" || kill "$app" || true
+            tail -n 50 "$RUNNER_TEMP/app.log"
+          ' smoke "$SCREENSHOT"
+      - name: Publish the bundle to a private draft release
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_BUILDS_TOKEN }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/flatpak-out"
+          sha256sum "$(basename "$BUNDLE")" > "$(basename "$BUNDLE").sha256"
+          TAG="flatpak-${SHORT_SHA}-${GITHUB_RUN_ID}"
+          gh release create "$TAG" ./* \
+            --repo "$PRIVATE_BUILDS_REPOSITORY" \
+            --target main \
+            --title "Ultra Explorer Flatpak ${SHORT_SHA}" \
+            --notes "Private Flatpak test build of Ultra Explorer ${VERSION} from ${SOURCE_REF} (${SOURCE_SHA})." \
+            --draft
