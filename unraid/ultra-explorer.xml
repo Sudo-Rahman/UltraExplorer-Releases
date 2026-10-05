@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>UltraExplorer</Name>
+  <Repository>ghcr.io/sudo-rahman/ultra-explorer:latest</Repository>
+  <Registry>https://github.com/Sudo-Rahman/UltraExplorer-Releases/pkgs/container/ultra-explorer</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Sudo-Rahman/UltraExplorer-Releases/issues</Support>
+  <ReadMe>https://github.com/Sudo-Rahman/UltraExplorer-Releases#unraid-and-truenas</ReadMe>
+  <Project>https://ultra-explorer.app</Project>
+  <Overview>Ultra Explorer is a file explorer for your cloud storage and NAS folders, built on rclone. Browse, copy, move and synchronize files between about 40 storage providers and the shares of this server from a web interface.&#xD;
+&#xD;
+Before the first start, create the appdata folder with owner nobody:users (99:100). Set an administrator password of at least 12 characters. Files in /mnt/local are read and written as nobody:users.</Overview>
+  <Category>Cloud: Backup: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:7373]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/Sudo-Rahman/UltraExplorer-Releases/main/unraid/ultra-explorer.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/Sudo-Rahman/UltraExplorer-Releases/main/assets/catalog/icon.png</Icon>
+  <ExtraParams>--user 99:100 --read-only --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777 --cap-drop ALL --security-opt no-new-privileges:true</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Web interface port" Target="7373" Default="7373" Mode="tcp" Description="Port of the web interface." Type="Port" Display="always" Required="true" Mask="false">7373</Config>
+  <Config Name="Administrator password" Target="ULTRA_ADMIN_PASSWORD" Default="" Mode="" Description="Password to sign in, at least 12 characters." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Local files" Target="/mnt/local" Default="/mnt/user" Mode="rw" Description="Folder of this server shown as local files. Use a narrower share, or read-only access, to limit what the app can change." Type="Path" Display="always" Required="true" Mask="false">/mnt/user</Config>
+  <Config Name="Application data" Target="/data" Default="/mnt/user/appdata/ultra-explorer" Mode="rw" Description="Database, rclone configuration and credentials. Must be writable by nobody:users (99:100)." Type="Path" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/ultra-explorer</Config>
+  <Config Name="Secure cookies" Target="ULTRA_SECURE_COOKIES" Default="false|true" Mode="" Description="Set to true only when the app is reached through an HTTPS reverse proxy." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+</Container>

@@ -309,6 +309,26 @@ The container runs unprivileged with a read-only root filesystem, and keeps its 
 volume. Step-by-step guides, including installing the app on a phone, are in the
 [documentation](https://ultra-explorer.app/docs).
 
+### Unraid and TrueNAS
+
+**Unraid.** The Community Applications template is [`unraid/ultra-explorer.xml`](unraid/ultra-explorer.xml).
+It runs the container as `nobody:users` (99:100) and maps your shares to `/mnt/local`. Before the
+first start, create its data folder with that owner:
+
+```bash
+mkdir -p /mnt/user/appdata/ultra-explorer && chown 99:100 /mnt/user/appdata/ultra-explorer
+```
+
+**TrueNAS (24.10 and later).** Until the app is listed in the catalog, use **Apps › Discover Apps ›
+Custom App**:
+
+- image `ghcr.io/sudo-rahman/ultra-explorer` with the release tag, user and group `568`;
+- environment variable `ULTRA_ADMIN_PASSWORD`, and port `7373`;
+- an ixVolume at `/data`, and a Host Path to the dataset to browse at `/mnt/local`.
+
+Any non-root user works. The user you choose reads and writes the files in `/mnt/local`, so pick
+one with access to them.
+
 ## Free, Pro and Lifetime
 
 Ultra Explorer is free to download and use. **Pro** (subscription) and **Lifetime** (one-time
