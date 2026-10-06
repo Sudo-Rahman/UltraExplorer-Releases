@@ -318,3 +318,27 @@ test('persistent cache uploads are encrypted and public jobs do not export build
 	}
 	assert.match(await workflow(CI_PATH), /DOCKER_BUILD_RECORD_UPLOAD: "false"/);
 });
+
+test('snaps build natively per architecture and reach the store only after the GitHub release', async () => {
+	const contents = await workflow(RELEASE_PATH);
+	const build = contents.slice(contents.indexOf('  build-snap:'), contents.indexOf('  build-docker:'));
+	const publish = contents.slice(contents.indexOf('  publish-snap:'));
+
+	assert.match(contents, /snap:\n\s+description:[^\n]*\n\s+required: true\n\s+default: true\n\s+type: boolean/);
+	assert.match(build, /needs:\s+\[quality, validate-release\]/);
+	assert.match(build, /if:\s+inputs\.snap/);
+	assert.match(build, /runner:\s+ubuntu-24\.04\n/);
+	assert.match(build, /runner:\s+ubuntu-24\.04-arm/);
+	assert.match(build, /test "\$\(uname -m\)" = "\$MACHINE"/);
+	assert.match(build, /ref:\s+\$\{\{\s*needs\.validate-release\.outputs\.source_sha\s*\}\}/);
+	assert.match(build, /persist-credentials:\s+false/);
+	assert.match(build, /bash \.\/scripts\/build-snap\.sh "\$ARCH"/);
+	assert.match(build, /name:\s+snap-\$\{\{ matrix\.arch \}\}/);
+	assert.doesNotMatch(build, /SNAPCRAFT_STORE_CREDENTIALS/);
+
+	assert.match(publish, /needs:\s+\[validate-release, build-snap, publish-release\]/);
+	assert.match(publish, /if:\s+inputs\.snap/);
+	assert.match(publish, /SNAPCRAFT_STORE_CREDENTIALS:\s+\$\{\{\s*secrets\.SNAPCRAFT_STORE_CREDENTIALS\s*\}\}/);
+	assert.match(publish, /snapcraft upload --release=stable/);
+	assert.doesNotMatch(publish, /actions\/checkout/);
+});
