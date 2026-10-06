@@ -41,10 +41,14 @@ bundles are produced. There are no test-channel inputs.
 With `snap` left at its default `true`, `build-snap` runs the source repository's
 `scripts/build-snap.sh` (the same containerized snapcraft build as `pnpm desktop:snap`) on
 native `ubuntu-24.04` and `ubuntu-24.04-arm` runners, after the quality gate, and keeps only
-`ultra-explorer_<version>_<arch>.snap` as a one-day artifact. Its binary uses the
+`ultra-explorer_<version>_<arch>.snap` as a seven-day artifact. Its binary uses the
 `linux-snap` profile: no self-updater, since snapd refreshes installations. `publish-snap`
-waits for the public GitHub release, then uploads both snaps with
+waits for the public GitHub release, then uploads each architecture in its own job with
 `snapcraft upload --release=stable`. Installed snaps refresh to it automatically.
+
+The source tag must contain `scripts/build-snap.sh` and `snap/snapcraft.yaml` (from 1.0.4).
+A failed snap build does not hold back the GitHub release, the updater manifest or Docker:
+the run is marked failed and the store simply keeps the previous version.
 
 The store credential is the `SNAPCRAFT_STORE_CREDENTIALS` secret, an `export-login` file
 restricted to the `ultra-explorer` snap; only `publish-snap` receives it. Regenerate it before
@@ -62,8 +66,9 @@ the previous one back on stable without rebuilding:
 snapcraft release ultra-explorer <previous-revision> stable
 ```
 
-If only the store upload fails, re-run the failed `publish-snap` job from the same Actions run
-within a day, while its snap artifacts are retained.
+If a store upload fails, re-run only that failed `publish-snap` job ("Re-run failed jobs") from
+the same Actions run within seven days, while its snap artifact is retained. Do not re-run an
+architecture that was already uploaded: it would upload the same file again.
 
 Installers and updater payloads have deterministic ASCII names:
 

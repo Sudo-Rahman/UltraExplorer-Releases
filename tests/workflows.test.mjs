@@ -334,11 +334,16 @@ test('snaps build natively per architecture and reach the store only after the G
 	assert.match(build, /persist-credentials:\s+false/);
 	assert.match(build, /bash \.\/scripts\/build-snap\.sh "\$ARCH"/);
 	assert.match(build, /name:\s+snap-\$\{\{ matrix\.arch \}\}/);
+	assert.match(build, /retention-days:\s+7/);
 	assert.doesNotMatch(build, /SNAPCRAFT_STORE_CREDENTIALS/);
 
 	assert.match(publish, /needs:\s+\[validate-release, build-snap, publish-release\]/);
 	assert.match(publish, /if:\s+inputs\.snap/);
 	assert.match(publish, /SNAPCRAFT_STORE_CREDENTIALS:\s+\$\{\{\s*secrets\.SNAPCRAFT_STORE_CREDENTIALS\s*\}\}/);
-	assert.match(publish, /snapcraft upload --release=stable/);
+	// One upload per architecture, so a failed one is re-run alone.
+	assert.match(publish, /fail-fast:\s+false\n\s+matrix:\n\s+arch:\s+\[amd64, arm64\]/);
+	assert.match(publish, /name:\s+snap-\$\{\{ matrix\.arch \}\}/);
+	assert.match(publish, /snapcraft upload --release=stable "snaps\/ultra-explorer_\$\{VERSION\}_\$\{ARCH\}\.snap"/);
+	assert.doesNotMatch(publish, /for arch in/);
 	assert.doesNotMatch(publish, /actions\/checkout/);
 });

@@ -357,7 +357,8 @@ jobs:
           name: snap-${{ matrix.arch }}
           path: source/target/snap/ultra-explorer_${{ needs.validate-release.outputs.version }}_${{ matrix.arch }}.snap
           if-no-files-found: error
-          retention-days: 1
+          # Long enough to re-run a failed store upload later without rebuilding.
+          retention-days: 7
 
   build-docker:
     name: Build and test native containers
@@ -486,27 +487,28 @@ jobs:
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
 
   publish-snap:
-    name: Publish the snaps to the Snap Store
+    name: Publish snap ${{ matrix.arch }} to the Snap Store
     # Only after the GitHub release is public, so the store never runs ahead of a failed release.
+    # One job per architecture, so a failed upload is re-run alone without re-uploading the other.
     needs: [validate-release, build-snap, publish-release]
     if: inputs.snap
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Download the built snaps
+      - name: Download the built snap
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: snap-*
+          name: snap-${{ matrix.arch }}
           path: snaps
-          merge-multiple: true
       - name: Install snapcraft
         run: sudo snap install snapcraft --classic
       - name: Upload and release to the stable channel
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.validate-release.outputs.version }}
-        run: |
-          set -euo pipefail
-          for arch in amd64 arm64; do
-            snapcraft upload --release=stable "snaps/ultra-explorer_${VERSION}_${arch}.snap"
-          done
+        run: snapcraft upload --release=stable "snaps/ultra-explorer_${VERSION}_${ARCH}.snap"
