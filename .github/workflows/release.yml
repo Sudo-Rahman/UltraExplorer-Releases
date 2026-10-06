@@ -12,6 +12,11 @@ on:
         required: true
         default: macos,windows,linux
         type: string
+      snap:
+        description: Publish the amd64 and arm64 snaps to the Snap Store stable channel
+        required: true
+        default: true
+        type: boolean
 
 env:
   CARGO_INCREMENTAL: "0"
@@ -302,6 +307,59 @@ jobs:
           dependency-key: ${{ hashFiles('source/Cargo.lock', 'source/pnpm-lock.yaml') }}
           encryption-key: ${{ secrets.PRIVATE_BUILD_CACHE_KEY }}
 
+  build-snap:
+    name: Build snap ${{ matrix.arch }}
+    needs: [quality, validate-release]
+    if: inputs.snap
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            machine: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            machine: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - name: Check out the private source revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Sudo-Rahman/UltraExplorer
+          ref: ${{ needs.validate-release.outputs.source_sha }}
+          ssh-key: ${{ secrets.ULTRAEXPLORER_DEPLOY_KEY }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: source
+      - name: Require a native runner for the snap architecture
+        env:
+          MACHINE: ${{ matrix.machine }}
+        run: test "$(uname -m)" = "$MACHINE"
+      # The same containerized snapcraft build as `pnpm desktop:snap` in the source repository:
+      # `linux-snap` binary (no self-updater), production licensing, verified rclone sidecar.
+      - name: Build the snap
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: bash ./scripts/build-snap.sh "$ARCH"
+      - name: Require the snap of this release version
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: test -s "target/snap/ultra-explorer_${VERSION}_${ARCH}.snap"
+      - name: Upload the snap only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: snap-${{ matrix.arch }}
+          path: source/target/snap/ultra-explorer_${{ needs.validate-release.outputs.version }}_${{ matrix.arch }}.snap
+          if-no-files-found: error
+          # Long enough to re-run a failed store upload later without rebuilding.
+          retention-days: 7
+
   build-docker:
     name: Build and test native containers
     needs: [quality, validate-release]
@@ -427,3 +485,30 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > uploaded-release.json
           node release-tools/scripts/updater-manifest.mjs verify release-assets uploaded-release.json
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  publish-snap:
+    name: Publish snap ${{ matrix.arch }} to the Snap Store
+    # Only after the GitHub release is public, so the store never runs ahead of a failed release.
+    # One job per architecture, so a failed upload is re-run alone without re-uploading the other.
+    needs: [validate-release, build-snap, publish-release]
+    if: inputs.snap
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download the built snap
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: snap-${{ matrix.arch }}
+          path: snaps
+      - name: Install snapcraft
+        run: sudo snap install snapcraft --classic
+      - name: Upload and release to the stable channel
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.validate-release.outputs.version }}
+        run: snapcraft upload --release=stable "snaps/ultra-explorer_${VERSION}_${ARCH}.snap"

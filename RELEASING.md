@@ -32,8 +32,43 @@ The workflow rejects prereleases, a tag outside private main, a version that dif
 from Cargo, and existing public releases. It resolves the tag once to an immutable
 source SHA used by all quality checks and builds. Every run includes the full
 frontend/PWA/E2E/Rust quality gate, the selected desktop platforms (macOS ARM64, Windows x64,
-Linux x64 AppImage) and Docker for amd64/arm64. Store, Flatpak and Snap packaging are separate;
-no DEB/RPM bundles are produced. There are no test-channel inputs.
+Linux x64 AppImage), Docker for amd64/arm64 and, unless `snap=false`, the Snap Store
+packages. Microsoft Store, Mac App Store and Flatpak packaging are separate; no DEB/RPM
+bundles are produced. There are no test-channel inputs.
+
+## Snap Store
+
+With `snap` left at its default `true`, `build-snap` runs the source repository's
+`scripts/build-snap.sh` (the same containerized snapcraft build as `pnpm desktop:snap`) on
+native `ubuntu-24.04` and `ubuntu-24.04-arm` runners, after the quality gate, and keeps only
+`ultra-explorer_<version>_<arch>.snap` as a seven-day artifact. Its binary uses the
+`linux-snap` profile: no self-updater, since snapd refreshes installations. `publish-snap`
+waits for the public GitHub release, then uploads each architecture in its own job with
+`snapcraft upload --release=stable`. Installed snaps refresh to it automatically.
+
+The source tag must contain `scripts/build-snap.sh` and `snap/snapcraft.yaml` (from 1.0.4).
+A failed snap build does not hold back the GitHub release, the updater manifest or Docker:
+the run is marked failed and the store simply keeps the previous version.
+
+The store credential is the `SNAPCRAFT_STORE_CREDENTIALS` secret, an `export-login` file
+restricted to the `ultra-explorer` snap; only `publish-snap` receives it. Regenerate it before
+its expiry:
+
+```bash
+snapcraft export-login --snaps=ultra-explorer --channels=edge,beta,candidate,stable \
+  --acls=package_access,package_push,package_update,package_release --expires=YYYY-MM-DD snap-ci.txt
+```
+
+Skip the store for one release with `-f snap=false`. If a published revision is faulty, put
+the previous one back on stable without rebuilding:
+
+```bash
+snapcraft release ultra-explorer <previous-revision> stable
+```
+
+If a store upload fails, re-run only that failed `publish-snap` job ("Re-run failed jobs") from
+the same Actions run within seven days, while its snap artifact is retained. Do not re-run an
+architecture that was already uploaded: it would upload the same file again.
 
 Installers and updater payloads have deterministic ASCII names:
 
@@ -62,7 +97,8 @@ version on target systems.
 
 Configure the existing `release` environment approval rules as appropriate.
 Required secrets: `ULTRAEXPLORER_DEPLOY_KEY`, `TAURI_SIGNING_PRIVATE_KEY`,
-`PRIVATE_BUILD_CACHE_KEY` (base64-encoded 32 random bytes), and the
+`PRIVATE_BUILD_CACHE_KEY` (base64-encoded 32 random bytes), `SNAPCRAFT_STORE_CREDENTIALS`
+(see Snap Store), and the
 existing Apple signing/notarization secrets (`APPLE_CERTIFICATE`,
 `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_API_KEY`,
 `APPLE_API_ISSUER`, `APPLE_API_PRIVATE_KEY`). Set
