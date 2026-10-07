@@ -25,8 +25,12 @@
   <p>
     <a href="https://github.com/Sudo-Rahman/UltraExplorer-Releases/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Sudo-Rahman/UltraExplorer-Releases?display_name=tag&sort=semver&style=flat-square&color=7ddf00" /></a>
     <a href="https://github.com/Sudo-Rahman/UltraExplorer-Releases/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Sudo-Rahman/UltraExplorer-Releases/total?style=flat-square&color=111111" /></a>
-    <img alt="Platforms" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Docker-111111?style=flat-square" />
+    <img alt="Platforms" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20Docker-111111?style=flat-square" />
     <img alt="Languages" src="https://img.shields.io/badge/languages-10-111111?style=flat-square" />
+  </p>
+
+  <p>
+    <a href="https://snapcraft.io/ultra-explorer"><img alt="Get it from the Snap Store" src="https://snapcraft.io/static/images/badges/en/snap-store-black.svg" height="48" /></a>
   </p>
 </div>
 
@@ -255,14 +259,25 @@ a Select mode with an actions bar, and settings as a list.
 | --- | --- | --- |
 | **macOS** | [`.dmg` from the latest release](https://github.com/Sudo-Rahman/UltraExplorer-Releases/releases/latest) or Homebrew | Apple Silicon |
 | **Windows** | [`.exe` installer from the latest release](https://github.com/Sudo-Rahman/UltraExplorer-Releases/releases/latest) | Windows 10 or 11, x64 |
+| **Linux** | [Snap Store](https://snapcraft.io/ultra-explorer) | Any distribution with snapd, x64 or ARM64 |
 | **Docker** | `ghcr.io/sudo-rahman/ultra-explorer` | Any Docker host or NAS |
-| **Linux** | Coming soon | |
 
 ### macOS with Homebrew
 
 ```bash
 brew install --cask sudo-rahman/tap/ultra-explorer
 ```
+
+### Linux with Snap
+
+[![Get it from the Snap Store](https://snapcraft.io/static/images/badges/en/snap-store-black.svg)](https://snapcraft.io/ultra-explorer)
+
+```bash
+sudo snap install ultra-explorer
+```
+
+Works on Ubuntu, Debian, Fedora, Arch Linux and any distribution with
+[snapd](https://snapcraft.io/docs/installing-snapd). Updates install automatically.
 
 ### Docker
 
