@@ -326,8 +326,8 @@ volume. Step-by-step guides, including installing the app on a phone, are in the
 
 ### Unraid and TrueNAS
 
-**Unraid.** The Community Applications template is [`unraid/ultra-explorer.xml`](unraid/ultra-explorer.xml).
-It runs the container as `nobody:users` (99:100) and maps your shares to `/mnt/local`. Before the
+**Unraid.** The Community Applications template lives in
+[`Sudo-Rahman/unraid-templates`](https://github.com/Sudo-Rahman/unraid-templates). It runs the container as `nobody:users` (99:100) and maps your shares to `/mnt/local`. Before the
 first start, create its data folder with that owner:
 
 ```bash
