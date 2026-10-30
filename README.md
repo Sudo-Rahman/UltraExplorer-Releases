@@ -44,7 +44,7 @@ https://github.com/user-attachments/assets/7ac566d6-2f84-4c23-afdf-7bea404a6d4b
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-explorer-dark.webp" />
-  <img src="assets/readme/hero-explorer-light.webp" alt="Ultra Explorer dual-pane explorer: OneDrive on the left, a NAS on the right" />
+  <img src="assets/readme/hero-explorer-light.webp" alt="Ultra Explorer dual-pane explorer: Nextcloud on the left, a NAS on the right" />
 </picture>
 
 ## Contents
@@ -53,9 +53,11 @@ https://github.com/user-attachments/assets/7ac566d6-2f84-4c23-afdf-7bea404a6d4b
 - [Features](#features)
   - [Dual-pane explorer](#dual-pane-explorer)
   - [40+ storages](#40-storages)
-  - [Transfer queue](#transfer-queue)
+  - [File details and media info](#file-details-and-media-info)
+  - [Storage capacity and forecasts](#storage-capacity-and-forecasts)
+  - [Operations](#operations)
   - [Synchronizations](#synchronizations)
-  - [Space analysis](#space-analysis)
+  - [Space analysis and cleanup](#space-analysis-and-cleanup)
   - [Multi-cloud search](#multi-cloud-search)
   - [Dashboard, settings and shortcuts](#dashboard-settings-and-shortcuts)
   - [Docker, NAS and phone](#docker-nas-and-phone)
@@ -73,7 +75,8 @@ Ultra Explorer puts all of them in one window.
 - **Two panes, any two storages.** Drag files from OneDrive to your NAS, or between two S3 buckets.
 - **Nothing changes by surprise.** Conflicts always ask, and every synchronization can be previewed
   before it runs.
-- **See where your space goes.** Four interactive maps of any folder, on any storage.
+- **See where your space goes.** Four interactive maps of any folder, on any storage, and a forecast
+  of when each storage will be full.
 - **Native and light.** A Rust core with a native desktop app, or a self-hosted Docker server.
 - **Private by design.** No telemetry. Your keys stay in `rclone.conf` on your machine and your files
   never pass through our servers.
@@ -89,7 +92,11 @@ transfer them, from local to cloud or between two remote storages.
 - **Drag and drop transfers** between any two storages
 - **No silent overwrites:** every conflict asks you to overwrite, skip or keep both
 - **Tabs** with saved paths and filters
-- **Recursive folder size** on demand
+- **Folder sizes in one click:** click the dash in the Size column to total a folder, subfolders
+  included, then click the size to see how many objects it holds
+- **Copy path** with Option (Shift on Windows and Linux) in the context menu, and paste a path into
+  the address bar to go straight back to it
+- **Resizable columns** in the Details view, remembered per pane
 
 <table>
   <tr>
@@ -101,14 +108,14 @@ transfer them, from local to cloud or between two remote storages.
     </td>
     <td width="50%">
       <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="assets/readme/dashboard-dark.webp" />
-        <img src="assets/readme/dashboard-light.webp" alt="Dashboard with storages and activity" />
+        <source media="(prefers-color-scheme: dark)" srcset="assets/readme/explorer-folder-size-dark.webp" />
+        <img src="assets/readme/explorer-folder-size-light.webp" alt="A folder's total size and object count in the Details view" />
       </picture>
     </td>
   </tr>
   <tr>
     <td align="center">Copy, move and organize with the context menu</td>
-    <td align="center">Storage health and transfer activity at a glance</td>
+    <td align="center">Total any folder's size, subfolders included</td>
   </tr>
 </table>
 
@@ -141,15 +148,73 @@ and keep using it from the command line.
 
 See the full list in [Supported storages](#supported-storages).
 
-### Transfer queue
+### File details and media info
 
-Every copy and move goes into a persistent FIFO queue that never blocks the interface. Follow live
-throughput, inspect each job (route, progress, speed, timeline), and pick up where you left off after
-a restart: the queue is stored in SQLite.
+Open the Properties of a video, audio or image file to see inside it without downloading it, on any
+storage. The **MediaInfo** tab shows the container, duration and bit rate, then each track: codec,
+resolution, frame rate, HDR, channels and language. Switch to MediaInfo's own Detailed, Text, JSON
+or XML report, ready to copy. Any file also shows its **MD5, SHA-1 and SHA-256** hashes.
+
+<table>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/readme/explorer-media-info-dark.webp" />
+        <img src="assets/readme/explorer-media-info-light.webp" alt="MediaInfo tab of a 4K HDR film" />
+      </picture>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/readme/explorer-file-hashes-dark.webp" />
+        <img src="assets/readme/explorer-file-hashes-light.webp" alt="MD5, SHA-1 and SHA-256 hashes of a file" />
+      </picture>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">Codecs and tracks, read where the file lives</td>
+    <td align="center">Integrity hashes, ready to copy</td>
+  </tr>
+</table>
+
+### Storage capacity and forecasts
+
+Ultra Explorer keeps a usage history for each storage and tells you how much it grew this week and
+when it will be full. The capacity window charts the last 7, 30 or 90 days with the days it reaches
+80, 90 and 100 %, and the dashboard ranks your storages by how soon they will be full.
+
+For a NAS share or server that does not report its size, enter the size of its disk: the app then
+measures what its folders use and shows the free space.
+
+<table>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/readme/storages-capacity-dark.webp" />
+        <img src="assets/readme/storages-capacity-light.webp" alt="Capacity window of a NAS with its usage chart and the days it fills up" />
+      </picture>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/readme/dashboard-dark.webp" />
+        <img src="assets/readme/dashboard-light.webp" alt="Dashboard ranking storages by how soon they will be full" />
+      </picture>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">Usage over 7, 30 or 90 days, and when it will be full</td>
+    <td align="center">Every storage at a glance on the dashboard</td>
+  </tr>
+</table>
+
+### Operations
+
+Copies, moves, uploads and synchronizations run in the background and are all listed under
+**Operations**, in a queue that never blocks the interface. Follow live throughput, inspect each job
+(route, progress, speed, timeline), and pick up where you left off after a restart.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/transfers-workspace-dark.webp" />
-  <img src="assets/readme/transfers-workspace-light.webp" alt="Transfer queue with the job inspector" />
+  <img src="assets/readme/transfers-workspace-light.webp" alt="Operations list with the job inspector" />
 </picture>
 
 ### Synchronizations
@@ -184,10 +249,14 @@ preview.
   </tr>
 </table>
 
-### Space analysis
+### Space analysis and cleanup
 
 Scan any folder, on any storage, and explore it as a **sunburst**, **treemap**, **circle pack** or
 **tree**. Zoom into a folder in one click and jump straight to it in the explorer.
+
+To free space, drag a folder from the map to the bin, or right-click it and choose **Set aside**. The
+map shows at once the space you would free, one click puts a folder back, and the folders set aside
+are deleted only after you confirm.
 
 <table>
   <tr>
@@ -210,6 +279,11 @@ Scan any folder, on any storage, and explore it as a **sunburst**, **treemap**, 
   </tr>
 </table>
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/space-analysis-cleanup-dark.webp" />
+  <img src="assets/readme/space-analysis-cleanup-light.webp" alt="Folders set aside in Space analysis, with the space they would free" />
+</picture>
+
 ### Multi-cloud search
 
 Search up to eight storages at once, in parallel. Start from a preset (documents, images,
@@ -223,7 +297,7 @@ the exact location of every file.
 
 ### Dashboard, settings and shortcuts
 
-- **Dashboard:** connected storages, quotas, live throughput and recent activity.
+- **Dashboard:** connected storages, how soon each will be full, live throughput and recent activity.
 - **Light, dark or system theme.**
 - **10 languages**, switched without reloading: English, French, German, Spanish, Italian,
   Portuguese, Chinese, Japanese, Korean and Russian.
@@ -347,7 +421,7 @@ one with access to them.
 ## Free, Pro and Lifetime
 
 Ultra Explorer is free to download and use. **Pro** (subscription) and **Lifetime** (one-time
-purchase) unlock multi-cloud search, space analysis and scheduled synchronizations.
+purchase) unlock multi-cloud search, space analysis, scheduled synchronizations and the MediaInfo tab.
 See [ultra-explorer.app/pricing](https://ultra-explorer.app/pricing).
 
 ## Privacy and security
