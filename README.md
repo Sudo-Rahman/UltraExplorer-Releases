@@ -294,6 +294,11 @@ Limit a search to chosen folders at any depth, or match your text against the wh
 **Paths** kind instead of names only.
 
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/search-folders-dark.webp" />
+  <img src="assets/readme/search-folders-light.webp" alt="Searching five storages, one of them limited to a folder" />
+</picture>
+
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/unified-search-dark.webp" />
   <img src="assets/readme/unified-search-light.webp" alt="Searching three storages at once" />
 </picture>
