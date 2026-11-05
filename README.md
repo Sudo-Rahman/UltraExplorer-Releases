@@ -290,6 +290,9 @@ Search up to eight storages at once, in parallel. Start from a preset (documents
 archives…), refine with typed filters, and browse up to 50,000 results in a virtualized table with
 the exact location of every file.
 
+Limit a search to chosen folders at any depth, or match your text against the whole path with the
+**Paths** kind instead of names only.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/unified-search-dark.webp" />
   <img src="assets/readme/unified-search-light.webp" alt="Searching three storages at once" />
