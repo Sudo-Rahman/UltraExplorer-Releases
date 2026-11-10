@@ -97,6 +97,9 @@ transfer them, from local to cloud or between two remote storages.
 - **Copy path** with Option (Shift on Windows and Linux) in the context menu, and paste a path into
   the address bar to go straight back to it
 - **Resizable columns** in the Details view, remembered per pane
+- **Batch rename (Pro):** select two or more items and press F2 to rename up to 10,000 files and
+  folders with rules, templates and presets (including Plex and Jellyfin series and movies), preview
+  every new name, and undo a batch afterwards. Nothing is ever overwritten
 
 <table>
   <tr>
