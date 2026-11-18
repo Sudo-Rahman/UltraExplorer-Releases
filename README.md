@@ -54,6 +54,7 @@ https://github.com/user-attachments/assets/7ac566d6-2f84-4c23-afdf-7bea404a6d4b
   - [Dual-pane explorer](#dual-pane-explorer)
   - [40+ storages](#40-storages)
   - [File details and media info](#file-details-and-media-info)
+  - [Image previews](#image-previews)
   - [Storage capacity and forecasts](#storage-capacity-and-forecasts)
   - [Operations](#operations)
   - [Synchronizations](#synchronizations)
@@ -176,6 +177,38 @@ or XML report, ready to copy. Any file also shows its **MD5, SHA-1 and SHA-256**
   <tr>
     <td align="center">Codecs and tracks, read where the file lives</td>
     <td align="center">Integrity hashes, ready to copy</td>
+  </tr>
+</table>
+
+### Image previews
+
+The Icons and Gallery views show a thumbnail of every image, and so do the cards of Search, on
+**every storage**: a cloud drive, an S3 bucket or a NAS share behaves like a local disk. Double-click
+an image to preview it, with its **Information** and **MediaInfo** tabs and the arrows to the next
+images of the folder, or open it in the **viewer** to zoom toward the pointer, read its camera, lens,
+exposure and histogram, and move through the folder from a strip of images. JPEG, PNG, GIF, WebP,
+SVG, TIFF, HEIC and camera RAW formats are supported. Images you open are kept on your device, and
+Settings › Features › Previews and cache chooses where thumbnails are made and how large the cache
+can grow. Image previews are part of Pro.
+
+<table>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/readme/explorer-view-gallery-dark.webp" />
+        <img src="assets/readme/explorer-view-gallery-light.webp" alt="Gallery view of a Nextcloud folder and an S3 bucket, every image showing its thumbnail" />
+      </picture>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/readme/explorer-image-viewer-dark.webp" />
+        <img src="assets/readme/explorer-image-viewer-light.webp" alt="The viewer on an image stored in S3, with its details, histogram and strip of images" />
+      </picture>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">Thumbnails on any storage, here Nextcloud and S3</td>
+    <td align="center">The viewer: zoom, details and the folder's images</td>
   </tr>
 </table>
 
@@ -366,13 +399,7 @@ Works on Ubuntu, Debian, Fedora, Arch Linux and any distribution with
 
 ### Docker
 
-1. Create a `.env` file next to your `compose.yml` with an admin password:
-
-   ```bash
-   ULTRA_ADMIN_PASSWORD=change-me
-   ```
-
-2. Save this as `compose.yml`:
+1. Save this as `compose.yml`:
 
    ```yaml
    services:
@@ -382,7 +409,9 @@ Works on Ubuntu, Debian, Fedora, Arch Linux and any distribution with
        ports:
          - "7373:7373"
        environment:
-         ULTRA_ADMIN_PASSWORD: "${ULTRA_ADMIN_PASSWORD:?Set ULTRA_ADMIN_PASSWORD in .env}"
+         # Optional: leave it out and the first browser to open the app within 15 minutes
+         # creates the administrator password. To choose it yourself, set it here (12+ characters).
+         # ULTRA_ADMIN_PASSWORD: "change-me-to-a-long-password"
          ULTRA_LOCAL_ROOTS: /mnt/local
        volumes:
          - ultra-data:/data
@@ -399,11 +428,14 @@ Works on Ubuntu, Debian, Fedora, Arch Linux and any distribution with
      ultra-data:
    ```
 
-3. Start it and open `http://<your-server>:7373`:
+2. Start it and open `http://<your-server>:7373`:
 
    ```bash
    docker compose up -d
    ```
+
+3. Create the administrator password on the page that opens, within 15 minutes of the start. If
+   the time runs out, restart the container to open a new window.
 
 The container runs unprivileged with a read-only root filesystem, and keeps its data in a single
 volume. Step-by-step guides, including installing the app on a phone, are in the
@@ -423,7 +455,8 @@ mkdir -p /mnt/user/appdata/ultra-explorer && chown 99:100 /mnt/user/appdata/ultr
 Custom App**:
 
 - image `ghcr.io/sudo-rahman/ultra-explorer` with the release tag, user and group `568`;
-- environment variable `ULTRA_ADMIN_PASSWORD`, and port `7373`;
+- port `7373`, and optionally the environment variable `ULTRA_ADMIN_PASSWORD` (leave it out to
+  create the password in the browser within 15 minutes of the start);
 - an ixVolume at `/data`, and a Host Path to the dataset to browse at `/mnt/local`.
 
 Any non-root user works. The user you choose reads and writes the files in `/mnt/local`, so pick
