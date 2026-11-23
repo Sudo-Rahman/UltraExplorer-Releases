@@ -191,6 +191,10 @@ SVG, TIFF, HEIC and camera RAW formats are supported. Images you open are kept o
 Settings › Features › Previews and cache chooses where thumbnails are made and how large the cache
 can grow. Image previews are part of Pro.
 
+PDF documents get the same treatment: the first page is the thumbnail, the preview dialog scrolls
+through every page (zoom, text selection, links, password-protected files), and the viewer adds a text
+search and printing. PDF previews are part of Pro.
+
 <table>
   <tr>
     <td width="50%">
