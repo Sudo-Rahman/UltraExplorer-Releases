@@ -195,6 +195,12 @@ PDF documents get the same treatment: the first page is the thumbnail, the previ
 through every page (zoom, text selection, links, password-protected files), and the viewer adds a text
 search and printing. PDF previews are part of Pro.
 
+3D models (GLB, glTF, STL, OBJ, 3MF, FBX, COLLADA and USD) and fonts (TrueType, OpenType, WOFF and
+WOFF2) are previewed too. Models show a thumbnail and open in a preview you can orbit, pan and zoom,
+with a dedicated 3D viewer for shading modes, projection, animation and the scene's objects; fonts
+show a specimen and open in a Font viewer with your own preview text, variable-font axes and a glyph
+browser. 3D and font previews are part of Pro.
+
 <table>
   <tr>
     <td width="50%">
